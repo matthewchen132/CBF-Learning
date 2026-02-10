@@ -25,8 +25,6 @@ def main():
     rbf_model.train()
     m52_model.train()
     gauss_likelihood.train()
-
-    # learn the GP using Adam's optimizer (gradient descent)
     rbf_optimizer = torch.optim.Adam(
         list(rbf_model.parameters()) + list(gauss_likelihood.parameters()),
         lr=0.05
@@ -49,39 +47,61 @@ def main():
 
         m52_optimizer.zero_grad()
         m52_output = m52_model(training_x)
-        # m52_loss = -m52_mll(m52_output, training_y)
+        m52_loss = -m52_mll(m52_output, training_y)
+        m52_loss.backward()
 
-
-
-        print(f"Iteration: {i}, rbf_loss: {round(rbf_loss.item(),4)}")
+        print(f"Iteration: {i}, RBF Loss: {round(rbf_loss.item(),4)}, Matern 5/2 Loss: {round(m52_loss.item(),4)}")
         rbf_optimizer.step()
+        m52_optimizer.step()
     # evaluate results
     rbf_model.eval()
+    m52_model.eval()
     gauss_likelihood.eval()
     with torch.no_grad(), gp.settings.fast_pred_var():
         test_x = torch.linspace(start_x, end_x + 1,n_samples, dtype=training_x.dtype)
-        y_pred = gauss_likelihood(rbf_model(test_x))
-        f_pred = rbf_model(test_x)
-        y_lower, y_upper = y_pred.confidence_region()
-        f_lower, f_upper = f_pred.confidence_region()
+        y_pred_rbf = gauss_likelihood(rbf_model(test_x))
+        f_pred_rbf = rbf_model(test_x)
+        y_lower_rbf, y_upper_rbf = y_pred_rbf.confidence_region()
+        f_lower_rbf, f_upper_rbf = f_pred_rbf.confidence_region()
+
+        y_pred_m52 = gauss_likelihood(m52_model(test_x))
+        f_pred_m52 = m52_model(test_x)
+        y_lower_m52, y_upper_m52 = y_pred_m52.confidence_region()
+        f_lower_m52, f_upper_m52 = f_pred_m52.confidence_region()
 
     # plot
-    f, ax = plt.subplots(2, 1, figsize=(8, 6))
+    f, ax = plt.subplots(2, 1, figsize = (10,8))
     ax[0].plot(training_x, training_y, 'b.', label="Observations")
-    ax[0].plot(test_x, y_pred.mean.numpy(), 'r', label="Posterior Mean")
+    ax[0].plot(test_x, y_pred_rbf.mean.numpy(), 'r', label="Posterior Mean")
     ax[0].fill_between(
-        test_x.numpy(), f_lower.numpy(), f_upper.numpy(),
+        test_x.numpy(), f_lower_rbf.numpy(), f_upper_rbf.numpy(),
         alpha=0.7,label="Function Confidence Interval"
     )
     ax[0].fill_between(
-        test_x.numpy(), y_lower.numpy(),y_upper.numpy(),
+        test_x.numpy(), y_lower_rbf.numpy(),y_upper_rbf.numpy(),
         alpha=0.15,label="Y Confidence Interval"
     )
     ax[0].axvline(x = end_x, color = "g", linestyle = "--")
     ax[0].set_xlabel("X")
     ax[0].set_ylabel("Y")
-    ax[0].set_title("GP Regression (y = sin(x) + x)")
+    ax[0].set_title("GP Regression, RBF Kernel (y = sin(x) + x)")
     ax[0].legend()
+
+    ax[1].plot(training_x, training_y, 'b.', label="Observations")
+    ax[1].plot(test_x, y_pred_rbf.mean.numpy(), 'r', label="Posterior Mean")
+    ax[1].fill_between(
+        test_x.numpy(), f_lower_m52.numpy(), f_upper_m52.numpy(),
+        alpha=0.7,label="Function Confidence Interval"
+    )
+    ax[1].fill_between(
+        test_x.numpy(), y_lower_m52.numpy(),y_upper_m52.numpy(),
+        alpha=0.15,label="Y Confidence Interval"
+    )
+    ax[1].axvline(x = end_x, color = "g", linestyle = "--")
+    ax[1].set_xlabel("X")
+    ax[1].set_ylabel("Y")
+    ax[1].set_title("GP Regression, Matern 5/2 Kernel (y = sin(x) + x)")
+    ax[1].legend()
     plt.tight_layout()
     plt.show()
 

@@ -25,7 +25,7 @@ class m52_example(gpytorch.models.ExactGP):
         
         lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 6.0) # set by tutorial
         outputscale_prior = gpytorch.priors.GammaPrior(2.0, 0.15) # set by tutorial
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.Matern52KernelGrad
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel
                                                          (lengthscale_prior=lengthscale_prior,
                                                          ),outputscale_prior=outputscale_prior
                                                          )

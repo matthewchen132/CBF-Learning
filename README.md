@@ -17,5 +17,5 @@ Deliverables: Plot the mean function together with its uncertainty. Discuss the 
 
 # Questions
  - is there a general good amount of training data to use? i notice with less data we get tight bounds, more data we get wider ones.
-  -     lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 6.0) 
+ - what is this? lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 6.0) 
         outputscale_prior = gpytorch.priors.GammaPrior(2.0, 0.15) 
