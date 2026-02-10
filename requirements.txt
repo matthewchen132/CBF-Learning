@@ -1,0 +1,4 @@
+python>=3.9.6
+numpy>=2.0
+torch>=2.8.0
+gpytorch>=1.13
