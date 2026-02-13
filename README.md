@@ -15,15 +15,15 @@ For each kernel, fit hyperparameters, then compare the posterior mean and predic
 Deliverables: 
 
 Plot the mean function together with its uncertainty. 
- - Plot is under GP_Example_Plots. ( GP_Example_Plots/Stage1_Plots.png )
+ - Plot is under GP_Example_Plots. ( GP_Example_Plots/Stage1_Plots.png ) 
+  - We saw strongest performance from Linear + Matern (measured by lowest loss). This makes sense as the linear kernel accounts for the linear bias in our underlying function.
 ![alt text](GP_Example_Plots/Stage1_Plots.png)
 
 Discuss the effect of kernel smoothness.
- - matern 5/2 is twice differentiable, while Squared exponential is infinitely differentiable. It's hard to see a difference here as sine is infinitely differentiable, 
- - but we do see that final loss of Matern 5/2 is slightly higher, indicating worse performance. 
+ - matern 5/2 is twice differentiable, while Squared exponential is infinitely differentiable. In the image below, I cranked up the rate parameter of the initial linear scale. This shows that Matern 5/2 was much noisier around the edges as compared to the SE kernel. This seems to imply that infinitely differentiable kernels will have less noise and be more smooth.
+ - Another Note: we do see that final loss of Matern 5/2 is slightly higher, indicating worse performance. 
  ![alt text](image.png)
- Here, I cranked up rate, and we can see that the Matern is much noisier around the edges vs SE kernel.
- I also saw that final loss of Matern 5/2 was always worse than RBF with the same prior settings.
+
 
 # Questions
  - is there a general good amount of training data to use? i notice with less data we get tight bounds, more data we get wider ones.
