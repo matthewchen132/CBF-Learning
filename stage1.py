@@ -2,9 +2,8 @@ import math
 import numpy as np
 import torch
 import gpytorch as gp
-from gpytorch.kernels import ScaleKernel, MaternKernel, RBFKernel
 import matplotlib.pyplot as plt
-from gp_simple import RBF_example, m52_example# my GP
+from gp_simple import RBF_example, m52_example, hybrid_example # my GP
 
 def main():
     # underlying function + noise
@@ -15,18 +14,24 @@ def main():
     rng = np.random.default_rng(0)  # random reproducible noise
     noise = rng.normal(loc=0.0, scale= 0.5, size=training_x.shape)
     noise = torch.tensor(noise, dtype=training_x.dtype)
-    training_y = torch.sin(math.pi*training_x) +training_x+ noise
+    training_y = torch.sin(math.pi*training_x) +training_x + noise
 
     # define our GPs and gaussian likelihood
     gauss_likelihood = gp.likelihoods.GaussianLikelihood()
+    hybrid_model = hybrid_example(training_x,training_y, likelihood=gauss_likelihood)
     rbf_model = RBF_example(training_x,training_y, likelihood=gauss_likelihood)
-    m52_model = m52_example(training_x,training_y, likelihood=gauss_likelihood)
+    m52_model = m52_example(training_x,training_y, likelihood=gauss_likelihood) 
     # find the optimal hyperparameters (mean, cov, etc.)
+    hybrid_model.train()
     rbf_model.train()
     m52_model.train()
     gauss_likelihood.train()
     rbf_optimizer = torch.optim.Adam(
         list(rbf_model.parameters()) + list(gauss_likelihood.parameters()),
+        lr=0.05
+    )
+    hybrid_optimizer = torch.optim.Adam(
+        list(hybrid_model.parameters()) + list(gauss_likelihood.parameters()),
         lr=0.05
     )
     m52_optimizer = torch.optim.Adam(
@@ -37,7 +42,7 @@ def main():
     # - finds probability of the function found by GP by comparing to sampled data.
     rbf_mll = gp.mlls.ExactMarginalLogLikelihood(gauss_likelihood,rbf_model)
     m52_mll = gp.mlls.ExactMarginalLogLikelihood(gauss_likelihood,m52_model)
-
+    hybrid_mll = gp.mlls.ExactMarginalLogLikelihood(gauss_likelihood,hybrid_model)
     n_samples = 200
     for i in range(n_samples):
         rbf_optimizer.zero_grad()
@@ -50,14 +55,22 @@ def main():
         m52_loss = -m52_mll(m52_output, training_y)
         m52_loss.backward()
 
-        print(f"Iteration: {i}, RBF Loss: {round(rbf_loss.item(),4)}, Matern 5/2 Loss: {round(m52_loss.item(),4)}")
+        hybrid_optimizer.zero_grad()
+        hybrid_output = hybrid_model(training_x)
+        hybrid_loss = -hybrid_mll(hybrid_output, training_y)
+        hybrid_loss.backward()
+
+        print(f"Iteration: {i}, RBF Loss: {round(rbf_loss.item(),4)}, Matern 5/2 Loss: {round(m52_loss.item(),4)} hybrid Loss: {round(hybrid_loss.item(),4)}")
         rbf_optimizer.step()
         m52_optimizer.step()
+        hybrid_optimizer.step()
     # evaluate results
     rbf_model.eval()
     m52_model.eval()
     gauss_likelihood.eval()
+    hybrid_model.eval()
     with torch.no_grad(), gp.settings.fast_pred_var():
+        # fit hyperparameters, using gradient ascent for max(log(p(y | X theta)))
         test_x = torch.linspace(start_x, end_x + 1,n_samples, dtype=training_x.dtype)
         y_pred_rbf = gauss_likelihood(rbf_model(test_x))
         f_pred_rbf = rbf_model(test_x)
@@ -69,8 +82,13 @@ def main():
         y_lower_m52, y_upper_m52 = y_pred_m52.confidence_region()
         f_lower_m52, f_upper_m52 = f_pred_m52.confidence_region()
 
-    # plot
-    f, ax = plt.subplots(2, 1, figsize = (10,8))
+        y_pred_hybrid = gauss_likelihood(hybrid_model(test_x))
+        f_pred_hybrid = hybrid_model(test_x)
+        y_lower_hybrid, y_upper_hybrid = y_pred_hybrid.confidence_region()
+        f_lower_hybrid, f_upper_hybrid = f_pred_hybrid.confidence_region()
+    # Plotting
+    # RBF / SE
+    f, ax = plt.subplots(3, 1, figsize = (10,8))
     ax[0].plot(training_x, training_y, 'b.', label="Observations")
     ax[0].plot(test_x, y_pred_rbf.mean.numpy(), 'r', label="Posterior Mean")
     ax[0].fill_between(
@@ -84,11 +102,11 @@ def main():
     ax[0].axvline(x = end_x, color = "g", linestyle = "--")
     ax[0].set_xlabel("X")
     ax[0].set_ylabel("Y")
-    ax[0].set_title("GP Regression, RBF Kernel (y = sin(x) + x)")
+    ax[0].set_title("GPR with RBF Kernel (y = sin(x) + x)")
     ax[0].legend()
-
+    # Matern 52
     ax[1].plot(training_x, training_y, 'b.', label="Observations")
-    ax[1].plot(test_x, y_pred_rbf.mean.numpy(), 'r', label="Posterior Mean")
+    ax[1].plot(test_x, y_pred_m52.mean.numpy(), 'r', label="Posterior Mean")
     ax[1].fill_between(
         test_x.numpy(), f_lower_m52.numpy(), f_upper_m52.numpy(),
         alpha=0.7,label="Function Confidence Interval"
@@ -100,8 +118,24 @@ def main():
     ax[1].axvline(x = end_x, color = "g", linestyle = "--")
     ax[1].set_xlabel("X")
     ax[1].set_ylabel("Y")
-    ax[1].set_title("GP Regression, Matern 5/2 Kernel (y = sin(x) + x)")
+    ax[1].set_title("GPR with Matern 5/2 Kernel (y = sin(x) + x)")
     ax[1].legend()
+    # hybrid
+    ax[2].plot(training_x, training_y, 'b.', label="Observations")
+    ax[2].plot(test_x, y_pred_hybrid.mean.numpy(), 'r', label="Posterior Mean")
+    ax[2].fill_between(
+        test_x.numpy(), f_lower_hybrid.numpy(), f_upper_hybrid.numpy(),
+        alpha=0.7,label="Function Confidence Interval"
+    )
+    ax[2].fill_between(
+        test_x.numpy(), y_lower_hybrid.numpy(),y_upper_hybrid.numpy(),
+        alpha=0.15,label="Y Confidence Interval"
+    )
+    ax[2].axvline(x = end_x, color = "g", linestyle = "--")
+    ax[2].set_xlabel("X")
+    ax[2].set_ylabel("Y")
+    ax[2].set_title("GPR with Linear + Matern Kernel (y = sin(x) + x)")
+    ax[2].legend()
     plt.tight_layout()
     plt.show()
 
