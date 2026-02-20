@@ -5,45 +5,55 @@ import gpytorch as gp
 import matplotlib.pyplot as plt
 from gp_simple import RBF_example, m52_example, hybrid_example # my GP
 
+def detach(tensor):
+    '''returns tensor.detach().numpy()'''
+    return tensor.detach().numpy()
+
 def main():
     # underlying function + noise
     start_x = 0
     end_x = 4
     n_training_points = 50
-    training_x = torch.linspace(start_x,end_x,n_training_points)
+    training_x = torch.linspace(start_x,end_x,n_training_points) # requires_grad to track gradient
     rng = np.random.default_rng(0)  # random reproducible noise
-    noise = rng.normal(loc=0.0, scale= 0.5, size=training_x.shape)
+    noise = rng.normal(loc=0.0, scale=0.5, size=training_x.shape)
     noise = torch.tensor(noise, dtype=training_x.dtype)
-    training_y = torch.sin(math.pi*training_x) +training_x + noise
+    training_y = torch.sin(math.pi*training_x) + training_x + noise
 
     # define our GPs and gaussian likelihood
-    gauss_likelihood = gp.likelihoods.GaussianLikelihood()
-    hybrid_model = hybrid_example(training_x,training_y, likelihood=gauss_likelihood)
-    rbf_model = RBF_example(training_x,training_y, likelihood=gauss_likelihood)
-    m52_model = m52_example(training_x,training_y, likelihood=gauss_likelihood) 
+    rbf_gauss_likelihood = gp.likelihoods.GaussianLikelihood()
+    m52_gauss_likelihood = gp.likelihoods.GaussianLikelihood()
+    hybrid_gauss_likelihood = gp.likelihoods.GaussianLikelihood()
+    rbf_model = RBF_example(training_x,training_y, likelihood=rbf_gauss_likelihood)
+    m52_model = m52_example(training_x,training_y, likelihood=m52_gauss_likelihood) 
+    hybrid_model = hybrid_example(training_x,training_y, likelihood=hybrid_gauss_likelihood)
+
     # find the optimal hyperparameters (mean, cov, etc.)
     hybrid_model.train()
     rbf_model.train()
     m52_model.train()
-    gauss_likelihood.train()
+    rbf_gauss_likelihood.train()
+    m52_gauss_likelihood.train()
+    hybrid_gauss_likelihood.train()
     rbf_optimizer = torch.optim.Adam(
-        list(rbf_model.parameters()) + list(gauss_likelihood.parameters()),
-        lr=0.05
-    )
-    hybrid_optimizer = torch.optim.Adam(
-        list(hybrid_model.parameters()) + list(gauss_likelihood.parameters()),
+        list(rbf_model.parameters()) + list(rbf_gauss_likelihood.parameters()),
         lr=0.05
     )
     m52_optimizer = torch.optim.Adam(
-        list(m52_model.parameters()) + list(gauss_likelihood.parameters()),
+        list(m52_model.parameters()) + list(m52_gauss_likelihood.parameters()),
+        lr=0.05
+    )
+    hybrid_optimizer = torch.optim.Adam(
+        list(hybrid_model.parameters()) + list(hybrid_gauss_likelihood.parameters()),
         lr=0.05
     )
     # Marginal Log Likelihood:
     # - finds probability of the function found by GP by comparing to sampled data.
-    rbf_mll = gp.mlls.ExactMarginalLogLikelihood(gauss_likelihood,rbf_model)
-    m52_mll = gp.mlls.ExactMarginalLogLikelihood(gauss_likelihood,m52_model)
-    hybrid_mll = gp.mlls.ExactMarginalLogLikelihood(gauss_likelihood,hybrid_model)
+    rbf_mll = gp.mlls.ExactMarginalLogLikelihood(rbf_gauss_likelihood,rbf_model)
+    m52_mll = gp.mlls.ExactMarginalLogLikelihood(m52_gauss_likelihood,m52_model)
+    hybrid_mll = gp.mlls.ExactMarginalLogLikelihood(hybrid_gauss_likelihood,hybrid_model)
     n_samples = 200
+    # optimize
     for i in range(n_samples):
         rbf_optimizer.zero_grad()
         rbf_output = rbf_model(training_x)
@@ -57,40 +67,46 @@ def main():
 
         hybrid_optimizer.zero_grad()
         hybrid_output = hybrid_model(training_x)
+        # hybrid_output.mean.retain_grad() # retains gradient for Stage 2
         hybrid_loss = -hybrid_mll(hybrid_output, training_y)
+        # hybrid_gradient = hybrid_output.mean.grad
         hybrid_loss.backward()
 
-        print(f"Iteration: {i}, RBF Loss: {round(rbf_loss.item(),4)}, Matern 5/2 Loss: {round(m52_loss.item(),4)} hybrid Loss: {round(hybrid_loss.item(),4)}")
+        print(f"Iteration: {i}, RBF Loss: {round(rbf_loss.item(),4)}, Matern 5/2 Loss: {round(m52_loss.item(),4)} Hybrid Loss: {round(hybrid_loss.item(),4)}")
+        # print(f"Iteration: {i}, RBF Grad: {round(rbf_gradient.item(),4)}, Matern 5/2 Grad: {round(m52_gradient.item(),4)} Hybrid Grad: {round(hybrid_gradient.item(),4)}")
         rbf_optimizer.step()
         m52_optimizer.step()
         hybrid_optimizer.step()
-    # evaluate results
+    # 1) Evaluate the Function 
     rbf_model.eval()
     m52_model.eval()
-    gauss_likelihood.eval()
     hybrid_model.eval()
+    rbf_gauss_likelihood.eval()
+    m52_gauss_likelihood.eval()
+    hybrid_gauss_likelihood.eval()
     with torch.no_grad(), gp.settings.fast_pred_var():
-        # fit hyperparameters, using gradient ascent for max(log(p(y | X theta)))
         test_x = torch.linspace(start_x, end_x + 1,n_samples, dtype=training_x.dtype)
-        y_pred_rbf = gauss_likelihood(rbf_model(test_x))
+        y_pred_rbf = rbf_gauss_likelihood(rbf_model(test_x))
         f_pred_rbf = rbf_model(test_x)
         y_lower_rbf, y_upper_rbf = y_pred_rbf.confidence_region()
         f_lower_rbf, f_upper_rbf = f_pred_rbf.confidence_region()
 
-        y_pred_m52 = gauss_likelihood(m52_model(test_x))
+        y_pred_m52 = m52_gauss_likelihood(m52_model(test_x))
         f_pred_m52 = m52_model(test_x)
         y_lower_m52, y_upper_m52 = y_pred_m52.confidence_region()
         f_lower_m52, f_upper_m52 = f_pred_m52.confidence_region()
 
-        y_pred_hybrid = gauss_likelihood(hybrid_model(test_x))
+        y_pred_hybrid = hybrid_gauss_likelihood(hybrid_model(test_x))
         f_pred_hybrid = hybrid_model(test_x)
         y_lower_hybrid, y_upper_hybrid = y_pred_hybrid.confidence_region()
         f_lower_hybrid, f_upper_hybrid = f_pred_hybrid.confidence_region()
+
+    # 2) Evalate the  
     # Plotting
     # RBF / SE
     f, ax = plt.subplots(3, 1, figsize = (10,8))
     ax[0].plot(training_x, training_y, 'b.', label="Observations")
-    ax[0].plot(test_x, y_pred_rbf.mean.numpy(), 'r', label="Posterior Mean")
+    ax[0].plot(test_x, y_pred_rbf.mean, 'r', label="Posterior Mean")
     ax[0].fill_between(
         test_x.numpy(), f_lower_rbf.numpy(), f_upper_rbf.numpy(),
         alpha=0.7,label="Function Confidence Interval"
@@ -106,7 +122,7 @@ def main():
     ax[0].legend()
     # Matern 52
     ax[1].plot(training_x, training_y, 'b.', label="Observations")
-    ax[1].plot(test_x, y_pred_m52.mean.numpy(), 'r', label="Posterior Mean")
+    ax[1].plot(test_x, y_pred_m52.mean, 'r', label="Posterior Mean")
     ax[1].fill_between(
         test_x.numpy(), f_lower_m52.numpy(), f_upper_m52.numpy(),
         alpha=0.7,label="Function Confidence Interval"
@@ -122,7 +138,7 @@ def main():
     ax[1].legend()
     # hybrid
     ax[2].plot(training_x, training_y, 'b.', label="Observations")
-    ax[2].plot(test_x, y_pred_hybrid.mean.numpy(), 'r', label="Posterior Mean")
+    ax[2].plot(test_x, y_pred_hybrid.mean, 'r', label="Posterior Mean")
     ax[2].fill_between(
         test_x.numpy(), f_lower_hybrid.numpy(), f_upper_hybrid.numpy(),
         alpha=0.7,label="Function Confidence Interval"
@@ -139,7 +155,5 @@ def main():
     plt.tight_layout()
     plt.show()
 
-
 if __name__ == "__main__":
     main()
-

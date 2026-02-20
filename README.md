@@ -31,4 +31,5 @@ Discuss the effect of kernel smoothness.
         outputscale_prior = gpytorch.priors.GammaPrior(2.0, 0.15) 
 
  - The predictive capability doesnt seem to see the upward bias, is this a kernel issue? how do you select the right composition of kernels in a complex unknown function?
- 
+ - does GP have applications to aerodynamics or complex, difficult to model dynamics?
+

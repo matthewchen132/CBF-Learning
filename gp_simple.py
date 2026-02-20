@@ -18,8 +18,8 @@ class RBF_example(gp.models.ExactGP): # AKA squared exponential
     def forward(self, x):
         mean = self.mean_module(x)
         covar = self.covar_module(x)
-        return gp.distributions.MultivariateNormal(mean, covar)
-    
+        return gp.distributions.MultivariateNormal(mean, covar)    
+
 
 class m52_example(gp.models.ExactGP):
     '''
@@ -40,6 +40,7 @@ class m52_example(gp.models.ExactGP):
         return gp.distributions.MultivariateNormal(mean, covar)
     
 class hybrid_example(gp.models.ExactGP):
+    '''Hybrid Kernel with SE and Linear components'''
     def __init__(self, train_x, train_y, likelihood):
         super(hybrid_example, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
