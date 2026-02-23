@@ -34,3 +34,9 @@ Discuss the effect of kernel smoothness.
  - does GP have applications to aerodynamics or complex, difficult to model dynamics?
 
  - Why is there no gradient terms left in higher order differentiation?
+
+ # Takeaways:
+
+Stage 2 Takeaways:
+ - In the posterior mean function, only the kernel is dependent on the input variables, and to get gradient we just differentiate kernel.
+ - Accomplish gradient calc by running torch.backwards() on our model at different test_x.

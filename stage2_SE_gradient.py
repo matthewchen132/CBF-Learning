@@ -21,7 +21,7 @@ def main():
     # underlying function + noise
     start_x = 0
     end_x = 6
-    n_training_points = 200
+    n_training_points = 50
     training_x = torch.linspace(start_x,end_x,n_training_points) # requires_grad to track gradient
     rng = np.random.default_rng(0)  # random reproducible noise
     noise = rng.normal(loc=0.0, scale=0.5, size=training_x.shape)

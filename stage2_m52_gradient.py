@@ -10,7 +10,6 @@ Stage 2 Takeaways:
  - In the posterior mean function, only the kernel is dependent on the input variables, and to get gradient we just differentiate kernel.
  - Accomplish gradient calc by running torch.backwards() on our model at different test_x.
  - X = linalg.solve(A,y) -> X = A^-1 y
-
 '''
 
 
@@ -79,31 +78,26 @@ def main():
 
         # 5) alpha = [K_noisy(x_train, x_train) + sigma^2 * I]^-1 @ y 
         K_xx = m52_model.covar_module(training_x,training_x).evaluate().detach()
-        noise = m52_gauss_likelihood.noise.detach()
-        K_xx_noisy = K_xx + noise*torch.eye(len(training_x)) # K + variance*I
+        obs_noise = m52_gauss_likelihood.noise.detach()
+        K_xx_noisy = K_xx + obs_noise*torch.eye(len(training_x)) # K + variance*I
         print(f"K_xx_noisy {K_xx_noisy.size()}\n")
 
         # K alpha = y
         # alpha = K^-1 * y
         alpha = torch.linalg.solve(K_xx_noisy, training_y) 
-        print(f"alpha {alpha.size()}\n")
         # Grad mean
         grad_mean = grad_K_xstar_x @ alpha # [grad_K][alpha]
         K_xstar_xstar = m52_model.covar_module(test_x,test_x).evaluate().detach()
-        print(f"K_xstar_xstar {K_xstar_xstar.size()}\n")
-
         # Finding d2K(x*, x*)
         r_star = torch.abs(test_x.unsqueeze(1) - test_x.unsqueeze(0))
-        d2K_dxstar_xstar = -(5/(3*l**2)) * sigma2 * (1 + rt5*r_star/l - 5*r_star**2/l**2) * torch.exp(-rt5*r_star/l)
+        d2K_dxstar_xstar = -(5/(3*l**2))*sigma2 * (1 + rt5*r_star/l - 5*r_star**2/l**2) * torch.exp(-rt5*r_star/l)
         grad2_K_xstar_xstar = - d2K_dxstar_xstar 
 
         middle_term =torch.linalg.solve(K_xx_noisy, grad_K_xstar_x.T) # K^-1 ^ grad_K(x*,x)
-
         cov_grad_K = grad2_K_xstar_xstar -grad_K_xstar_x @ middle_term
         gradient_conf_bounds = 2 * torch.sqrt(cov_grad_K.diag())
         conf_bound_low = -gradient_conf_bounds
         conf_bound_high = gradient_conf_bounds
-        print(gradient_conf_bounds)
         
         
     # Plotting
