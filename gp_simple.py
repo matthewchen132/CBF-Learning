@@ -32,8 +32,8 @@ class m52_example(gp.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super(m52_example, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
-        lengthscale_prior = gp.priors.GammaPrior(concentration=2.0, rate=1.5) # (a,b) : a/b = mean, a/b^2 = covariance
-        outputscale_prior = gp.priors.GammaPrior(2.0, 0.15) # (a,b) : a/b = covariance
+        lengthscale_prior = gp.priors.GammaPrior(concentration=3.0, rate=1.0) # (a,b) : a/b = mean, a/b^2 = covariance
+        outputscale_prior = gp.priors.GammaPrior(4.0, 0.17) # (a,b) : a/b = covariance
         self.covar_module = gp.kernels.ScaleKernel(gp.kernels.MaternKernel
                                                         (lengthscale_prior=lengthscale_prior,
                                                         ),outputscale_prior=outputscale_prior

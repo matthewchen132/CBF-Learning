@@ -71,8 +71,8 @@ def main():
         l = m52_model.covar_module.base_kernel.lengthscale.detach()
         diff_r  = (test_x.unsqueeze(1) - training_x.unsqueeze(0))
         print(f"diff_r {diff_r.size()}")
-        r = torch.abs(diff_r)
-        sigma2 = m52_model.covar_module.outputscale
+        r = torch.abs(diff_r) 
+        sigma2 = m52_model.covar_module.outputscale.detach()
         # kernel derivation
         rt5 = math.sqrt(5)
         grad_K_xstar_x = -sigma2 * (5.0 * diff_r/(3*l**2)) * (1 + rt5*r/l) * torch.exp(-rt5*r/l)
@@ -83,27 +83,27 @@ def main():
         K_xx_noisy = K_xx + noise*torch.eye(len(training_x)) # K + variance*I
         print(f"K_xx_noisy {K_xx_noisy.size()}\n")
 
-        # Rather than inverting, we do a numerical solve to get the inverse
         # K alpha = y
-        alpha = torch.linalg.solve(K_xx_noisy, training_y) # alpha = K^-1 * y
+        # alpha = K^-1 * y
+        alpha = torch.linalg.solve(K_xx_noisy, training_y) 
         print(f"alpha {alpha.size()}\n")
-
-        # 6) with a derived gradient of the kernel, we can use the same alpha from K+train to get the mean function "grad_mean"
-
+        # Grad mean
         grad_mean = grad_K_xstar_x @ alpha # [grad_K][alpha]
         K_xstar_xstar = m52_model.covar_module(test_x,test_x).evaluate().detach()
         print(f"K_xstar_xstar {K_xstar_xstar.size()}\n")
 
-        diff_r_stars = test_x.unsqueeze(1) - test_x.unsqueeze(0) 
-        grad2_K_xstar_xstar = -(5/(3*l**2)) * sigma2 * (1 + rt5*diff_r_stars/l - 5*diff_r_stars**2/l**2) * torch.exp(-rt5*diff_r_stars/l)
+        # Finding d2K(x*, x*)
+        r_star = torch.abs(test_x.unsqueeze(1) - test_x.unsqueeze(0))
+        d2K_dxstar_xstar = -(5/(3*l**2)) * sigma2 * (1 + rt5*r_star/l - 5*r_star**2/l**2) * torch.exp(-rt5*r_star/l)
+        grad2_K_xstar_xstar = - d2K_dxstar_xstar 
+
         middle_term =torch.linalg.solve(K_xx_noisy, grad_K_xstar_x.T) # K^-1 ^ grad_K(x*,x)
-        print(grad2_K_xstar_xstar.size())
-        print(middle_term.size())
+
         cov_grad_K = grad2_K_xstar_xstar -grad_K_xstar_x @ middle_term
-        gradient_conf_bound_vals = 2 * torch.sqrt(cov_grad_K).diag()
-        breakpoint()
-        conf_bound_low = -gradient_conf_bound_vals
-        conf_bound_high = gradient_conf_bound_vals
+        gradient_conf_bounds = 2 * torch.sqrt(cov_grad_K.diag())
+        conf_bound_low = -gradient_conf_bounds
+        conf_bound_high = gradient_conf_bounds
+        print(gradient_conf_bounds)
         
         
     # Plotting
