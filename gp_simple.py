@@ -22,7 +22,6 @@ class RBF_example(gp.models.ExactGP): # AKA squared exponential
         covar = self.covar_module(x)
         return gp.distributions.MultivariateNormal(mean, covar)    
 
-
 class m52_example(gp.models.ExactGP):
     '''
     Matern5/2 Kernel
@@ -46,8 +45,8 @@ class hybrid_example(gp.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super(hybrid_example, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
-        lengthscale_prior = gp.priors.GammaPrior(concentration=3.0, rate=5.8) # set by tutorial
-        outputscale_prior = gp.priors.GammaPrior(1.0, .17) # set by tutorial
+        lengthscale_prior = gp.priors.GammaPrior(concentration=30.0, rate=20)
+        outputscale_prior = gp.priors.GammaPrior(1.0, .25) 
         linear_kern = gp.kernels.LinearKernel()
         matern_kern = gp.kernels.MaternKernel(lengthscale_prior = lengthscale_prior, outputscale_prior = outputscale_prior)
         self.covar_module = gp.kernels.ScaleKernel(

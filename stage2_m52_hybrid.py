@@ -109,7 +109,7 @@ def main():
     ax[0].axvline(x = end_x, color = "g", linestyle = "--")
     ax[0].set_xlabel("X")
     ax[0].set_ylabel("Y")
-    ax[0].set_title("GPR with hybrid Kernel (y = sin(x) + x)")
+    ax[0].set_title("GPR with Hybrid Kernel (y = sin(x) + x)")
     ax[0].legend()
     # Derivative Plot
     ax[1].plot(det(test_x), det(grad_mean), 'r-', label="Gradient")
