@@ -5,8 +5,12 @@ Stage 0: Setup (DONE)
 Create a repo.
 Pick one GP library -> Chose GPyTorch
 
-# Stage 4
-<img width="985" height="785" alt="image" src="https://github.com/user-attachments/assets/fb720dd6-a6e3-4f89-a8f0-f8ccafc29f86" />
+# Stage 4 (GIBO)
+<img width="485" height="385" alt="image" src="https://github.com/user-attachments/assets/fb720dd6-a6e3-4f89-a8f0-f8ccafc29f86" />
+
+Locally "Trapped"
+<img width="495" height="391" alt="image" src="https://github.com/user-attachments/assets/e36f2e7b-d980-40d0-9426-0313bc64243e" />
+
 
 # Stage 1: Basic GP regression implementation (Done)
 GP regression on 1D function.
