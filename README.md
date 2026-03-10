@@ -40,3 +40,7 @@ Discuss the effect of kernel smoothness.
 Stage 2 Takeaways:
  - In the posterior mean function, only the kernel is dependent on the input variables, and to get gradient we just differentiate kernel.
  - Accomplish gradient calc by running torch.backwards() on our model at different test_x.
+
+
+Stage 4:
+ - interestinglu, if we have more points at start we dont try to poll tghere
