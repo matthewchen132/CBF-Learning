@@ -5,6 +5,10 @@ Stage 0: Setup (DONE)
 Create a repo.
 Pick one GP library -> Chose GPyTorch
 
+# 3/24: Conventional CBF performance under noise:
+<img width="548" height="451" alt="image" src="https://github.com/user-attachments/assets/173dd130-b97f-491b-bbad-eecf73851c47" />
+
+
 # Stage 4 (GIBO)
 
 <img width="485" height="385" alt="image" src="https://github.com/user-attachments/assets/fb720dd6-a6e3-4f89-a8f0-f8ccafc29f86" />
