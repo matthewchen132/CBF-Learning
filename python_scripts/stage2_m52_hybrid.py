@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import gpytorch as gp
 import matplotlib.pyplot as plt
-from gp_simple import hybrid_example # my GP
+from python_scripts.gp_simple import hybrid_example # my GP
 
 
 def det(tensor):

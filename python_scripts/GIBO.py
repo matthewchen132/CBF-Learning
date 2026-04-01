@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 from gp_simple import m52_example # my GP
 
 '''
+Steps after Stage 4:
+Robot avoiding an obstacle while getting data from a signed distance function
+GDA
+
+03/24 Deliverable
+Safe navigation of robot with obstacles, (get familiar with signed distance functions)
+ - implement learning cbf
+ - compare performance with Azra's weighted acq funciton, gibo
+
 Stage 4: 
  - Program GIBO from scratch.
  1) construct the acquisition function by polling change in variance with introduction of points, then USE the maximum change in variance.
@@ -19,7 +28,8 @@ def det(tensor):
 def main():
     # underlying function + noise
     samples_fwd = 0
-    step_size = 0.32
+    # step_size = 0.31  -- Well distributed Points -- 
+    step_size = 0.40 # Clumping at Right
     start_x = 0
     end_x = 4
     n_training_points = 1
@@ -35,8 +45,8 @@ def main():
         new_noise_theta = torch.tensor(rng.normal(0.0, 0.5), dtype=training_x.dtype)
         # -- (4) Sample noisy objective function: yt = J(θt) + ϵt --
         y_theta = torch.sin(math.pi * theta_t) + theta_t + new_noise_theta
+        
         # -- (5) Extend data set: D←{D,(θt,yt)}
-
         training_x = torch.cat((training_x, theta_t.reshape(1)), dim=0)
         training_y = torch.cat((training_y, y_theta.reshape(1)), dim=0)
 
@@ -57,7 +67,6 @@ def main():
             m52_output = m52_model(training_x)
             m52_loss = -m52_mll(m52_output, training_y)
             m52_loss.backward()
-            # print(f"Iteration: {i}, m52 Loss: {round(m52_loss.item(),4)}")
             m52_optimizer.step()
             
         # Evaluate the Gradient now that we have our trained GPR
@@ -174,7 +183,7 @@ def main():
     ax[0].axvline(x = end_x, color = "g", linestyle = "--")
     ax[0].set_xlabel("X")
     ax[0].set_ylabel("Y")
-    ax[0].set_title("GIBO (y = sin(x) + x)")
+    ax[0].set_title(f"GIBO (y = sin(x) + x)  | Step Size: {step_size}")
     ax[0].legend()
     # Derivative Plot
     ax[1].plot(det(test_x), det(grad_mean), 'r-', label="Gradient")
@@ -186,7 +195,7 @@ def main():
     ax[1].axvline(x = end_x, color = "g", linestyle = "--")
     ax[1].set_xlabel("X")
     ax[1].set_ylabel("Y")
-    ax[1].set_title("Gradient determined from GIBO ")
+    ax[1].set_title(" Gradient determined from GIBO ")
     ax[1].legend()
 
     plt.tight_layout()

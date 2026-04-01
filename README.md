@@ -44,3 +44,9 @@ Stage 2 Takeaways:
 
 Stage 4:
  - interestinglu, if we have more points at start we dont try to poll tghere
+
+ 
+03/24 Deliverable
+Safe navigation of robot with obstacles, (get familiar with signed distance functions)
+ - implement learning cbf
+ - compare performance with Azra's weighted acq funciton, gibo
