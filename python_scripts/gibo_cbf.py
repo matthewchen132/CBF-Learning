@@ -6,7 +6,7 @@ import pybullet_data
 import math
 
 # from GIBO
-
+from gp_simple import hybrid_example
 '''
 03/24 Deliverable
 Safe navigation of robot with obstacles, (get familiar with signed distance functions)
@@ -90,9 +90,8 @@ def rk4_step(X, V, t, dt, u):
     X = X + (k1 + k2*2 + k3*2 + k4) * (dt/6.0)
     print(f"X : {round(X.x,2)}, Y : {round(X.y,2)} theta : {round(X.theta * 180/np.pi, 2)}")
     return X;
-
-
-
+def gp_sdf():
+    print("")
 def gen_waypoint(gridsize):
     '''
     Generates a random waypoint in gridsize
@@ -101,7 +100,6 @@ def gen_waypoint(gridsize):
     waypoint_y = np.random.uniform(0.5*gridsize, -0.5*gridsize)
     waypoint = np.array([waypoint_x, waypoint_y])
     return waypoint
-
 def sdf(robot_x, robot_y, circle_pts, Noisy, noise):
     noise_copy = noise
     circle_pts_copy = circle_pts.copy()
@@ -123,7 +121,6 @@ def sdf(robot_x, robot_y, circle_pts, Noisy, noise):
     norms = np.linalg.norm(distances, axis=1)
     min_dist_idx = np.argmin(norms)
     return [norms[min_dist_idx], min_dist_idx]
-
 def spawn_circle(x, y, r):
     '''
     Spawns a 2d circle based on x-y position, radius, and 
@@ -186,8 +183,10 @@ def main():
     # -- Create a Waypoint --
     waypoint = np.array([5.0, 5.0])
     # -- Spawn Robot --
-    X = State(0.0, 0.0, 0.0)
-    X_noisy = State(0.0, 0.0, 0.0)
+    x_i, y_i, z_i = 0.0
+    X = State(x_i, y_i, z_i)
+    X_noisy = State(x_i, y_i, z_i)
+    X_gp_noisy = State(x_i, y_i, z_i)
     V = 1.0
     # -- Spawn Obstacle --
     circle_obstacle = spawn_circle(3.5, 3.5, r=1.0)
@@ -204,6 +203,7 @@ def main():
 
     rng = np.random.default_rng(seed=1)
     noise_std_dev = 0.01
+    # --  --
     goal1_reached = False
     goal2_reached = False
 
@@ -216,7 +216,6 @@ def main():
         # -- NOISY -- 
         h_noisy, closest_noisy_idx = sdf(X.x, X.y, noisy_circle_obstacle, Noisy=True, noise=noise) # Note that conventionally, h = SDF
         print(f"h:{h} , h_noisy: {h_noisy}")
-        
         alpha1 = 1.0
         alpha2 = 1.5
         u_final = cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, waypoint)

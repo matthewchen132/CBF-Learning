@@ -56,3 +56,4 @@ class hybrid_example(gp.models.ExactGP):
         mean = self.mean_module(x)
         covar = self.covar_module(x)
         return gp.distributions.MultivariateNormal(mean, covar)
+        

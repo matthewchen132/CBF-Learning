@@ -38,14 +38,9 @@ Discuss the effect of kernel smoothness.
 # NOTES
  - GIBO tends to get Stuck in local regions. We can shift this by changing the step size that theta t+1 is updated by, but this seemed to be a recurring issue.
 
-# Takeaways:
-Stage 2 Takeaways:
- - In the posterior mean function, only the kernel is dependent on the input variables, and to get gradient we just differentiate kernel.
- - Accomplish gradient calc by running torch.backwards() on our model at different test_x.
-
 
 Stage 4:
- - interestinglu, if we have more points at start we dont try to poll tghere
+ - interestingly, if we have more points at start we dont try to poll tghere
 
  
 03/24 Deliverable
