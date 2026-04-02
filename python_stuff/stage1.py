@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import gpytorch as gp
 import matplotlib.pyplot as plt
-from python_scripts.gp_simple import RBF_example, m52_example, hybrid_example # my GP
+from python_scripts.pkg.gp_simple import RBF_example, m52_example, hybrid_example # my GP
 
 def detach(tensor):
     '''returns tensor.detach().numpy()'''

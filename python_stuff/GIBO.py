@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import gpytorch as gp
 import matplotlib.pyplot as plt
-from gp_simple import m52_example # my GP
+from python_scripts.pkg.gp_simple import m52_example # my GP
 
 '''
 Steps after Stage 4:
@@ -106,6 +106,7 @@ def main():
 
             middle_term =torch.linalg.solve(K_xx_noisy, grad_K_xstar_x.T) # K^-1 ^ grad_K(x*,x)
             cov_grad_K = grad2_K_xstar_xstar -grad_K_xstar_x @ middle_term
+            breakpoint()
             gradient_conf_bounds = 2 * torch.sqrt(cov_grad_K.diag())
             conf_bound_low = -gradient_conf_bounds
             conf_bound_high = gradient_conf_bounds
@@ -157,7 +158,7 @@ def main():
         diff_r_theta = theta_t.unsqueeze(1) - training_x.unsqueeze(0)
         r_theta = torch.abs(diff_r_theta)
         grad_K_theta_x = -sigma2 * (5.0 * diff_r_theta/(3*l**2)) * (1 + rt5*r_theta/l) * torch.exp(-rt5*r_theta/l)
-        # -- (11) Update the posterior probability distribution of ∇θJ.  (Done implicitly??)-- 
+        # -- (11) Update the posterior probability distribution of ∇θJ.  (Done implicitly) -- 
         alpha = torch.linalg.solve(K_xx_noisy, training_y)
         grad_mu_theta_t = grad_K_theta_x @ alpha
         theta_t = torch.clamp((theta_t + step_size * grad_mu_theta_t.squeeze()), 
