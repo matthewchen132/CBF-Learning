@@ -9,19 +9,34 @@ import math
 from pkg.gp_simple import m52_example
 from pkg.gp_helpers import gp_helpers
 '''
+ - General Workflow of this Script --
+1) Train the GP on the 160 LiDAR points (0 distance) + 1 Robot point (current distance).
+2) Predict at the Robot's point to get h_mean and h_std.
+3) Calculate the Gradient.
+4) Plug h_safe and grad_h into the CBF.
+
+
 03/24 Deliverable
 Safe navigation of robot with obstacles, (get familiar with signed distance functions)
  - implement learning cbf
  - compare performance with Azra's weighted acq funciton, gibo
+ - Maybe we can design an acquisition function that minimizes the posterior variance rather than the gradient and see how it performs.
 
 What am I trying to do?
- - See if learning a NOISY control bar using a GP and GIBO provides a betteer
+ - See if learning a NOISY control bar using a GP and GIBO provides 
+    1) comparable Results than conventional methods with PERFECT data 
+    2) Better Results than conventional methods with NOISY, perfect data.
+ 
+IDEAS:
+    Adaptive step size to not get caught in local minima. With very small cov change of each step, Take a leap 
+    
 
  1) spawn robot <- Done
  2) spawn obstacle <- Done
  3) make signed distance function <- Done
- 4) traditional navigation to waypoint
- 5) GP Learning based navigation to waypoint
+ 4) traditional navigation to waypoint <- Done
+
+ 5) GP Learning based navigation to waypoint <- IP
 '''
 
 class State:
@@ -43,6 +58,10 @@ class State:
             self.y * scalar,
             self.theta * scalar
         )
+
+def actuator_limit():
+    '''TODO, user-defined actuator limit for angular velocity'''
+    print("todo")
 
 def optimal_control(X, Kp, goal_xy):
     '''
@@ -95,7 +114,6 @@ def return_visible_pts(circle_obstacle, closest_idx):
     # . we can see the closest 160 deg based on the closest visual index.
     indices = np.arange(closest_idx-80, closest_idx+80) % N; # assuming we miss the edges of the hemisphere (retains 160 deg)
     return circle_pts_copy[indices]
-
 
 def rk4_step(X, V, t, dt, u):
     '''
@@ -155,7 +173,7 @@ def spawn_circle(x, y, r):
     
     pts = np.array(pts)
     return pts
-def cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, waypoint):
+def conventional_cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, waypoint):
     '''
     -- Control Barrier Function for Dubin's Car
     - Returns the control "u" at that point
@@ -167,7 +185,6 @@ def cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, waypoint):
     grad_y = (X.y - circle_obstacle[closest_idx, 1]) / h
     # -- dhdt --
     dhdt = grad_x*V*np.cos(X.theta) + grad_y*V*np.sin(X.theta)
-
     # -- Let "b(x) = h_dot(x) + alpha1 * h(x)" --
     b = dhdt + alpha1 * h
     # -- Forcing b_dot(x) >= - alpha2 * b(x) brings "u" term back --
@@ -196,7 +213,7 @@ def main():
     t = 0.0
     dt = 0.1
     u = 0.0
-    Kp = 4
+    Kp = 4.0
     end_time = 20.0
 
     # -- Create a Waypoint --
@@ -216,9 +233,11 @@ def main():
     noisy_circle_obstacle = spawn_circle(3.5, 3.5, r=1.0)
     noisy_gp_circle_obstacle = spawn_circle(3.5, 3.5, r=1.0)
 
-    # -- Position --
+    # -- Position (Plotting Only) --
     robot_pos = []
     noisy_robot_pos = []
+    gp_robot_pos = []
+
     goal1_reached = False
     goal2_reached = False
     # -- Control --
@@ -230,9 +249,16 @@ def main():
 
     # -- GIBO --
     step_size = 0.1
+    # - theta_xy: point of interest for polling
+    # . In GIBO, theta_xy = point of high covariance
+    theta_xy = torch.tensor([[0.2, 0.2]], dtype=float) #  <- set initially to a step_size towards the way_point
 
     # -- Simulation Loop --
     while(t < end_time):
+        robot_pos.append([X.x, X.y])
+        noisy_robot_pos.append([X_noisy.x, X_noisy.y])
+        gp_robot_pos.append([X_gp_noisy.x, X_gp_noisy.y])
+
         noise = rng.normal(0, noise_std_dev, size=circle_obstacle.size)
         times.append(t)
         # -- Conventional CBF --
@@ -247,11 +273,11 @@ def main():
         # -- GP Training Data --
         gp_obstacle_data = torch.tensor(visible_pts) # (N, 2)
         pos_x = torch.tensor([X_gp_noisy.x, X_gp_noisy.y]).reshape(shape=[1,2]) # (N,2)
-        train_x = torch.cat([gp_obstacle_data, pos_x], dim=0) # (N+1, 2)
+        train_x = torch.cat([gp_obstacle_data, pos_x], dim=0).squeeze(-1) # (N+1, 2)
 
         surface_y = torch.zeros(visible_pts.shape[0], 1) # (N,1) <-- surface of SDF is marked as zeros
         dist_to_obj = torch.min(torch.norm(gp_obstacle_data - pos_x, dim=1)).reshape(shape=[1,1]) # (1,1)
-        train_y = torch.cat([surface_y, dist_to_obj], dim=0) # (N+1, 1)
+        train_y = torch.cat([surface_y, dist_to_obj], dim=0).squeeze(-1) # (N+1, 1)
 
         # -- Set up GP Model -- 
         m52_gaussian_likelihood = gp.likelihoods.GaussianLikelihood()
@@ -287,8 +313,7 @@ def main():
             '''
             wander_range = 0.4
             grid_x, grid_y = make_gridspace(X_gp_noisy, wander_range)
-            
-            test_x = torch.tensor([X_gp_noisy.x, X_gp_noisy.y]).reshape(1, 2) # (1, 2)
+            test_x = torch.tensor([X_gp_noisy.x, X_gp_noisy.y]).reshape(1, 2) # (1, 3)
             # (2) --  Find Gradient of the Signed Distance Function --
             '''
              - To create a good control barrier function, we must not only estimate the surface of the obstacle, 
@@ -300,102 +325,109 @@ def main():
             rt5 = math.sqrt(5)
             obs_noise = m52_gaussian_likelihood.noise.detach()
 
-            grad_mean, grad_covariance = gp_helpers.sdf_gp_gradient(GP_model=GP_model, likelihood=m52_gaussian_likelihood,
-                                                                    test_x=test_x, training_x=train_x, training_y=train_y)
-            # K_xstar_x = GP_model.covar_module(test_x,training_x).evaluate().detach()
-            # l = GP_model.covar_module.base_kernel.lengthscale.detach()
-            # diff_r  = (test_x.unsqueeze(1) - train_x.unsqueeze(0))
-            # print(f"diff_r {diff_r.size()}")
-            # r = torch.abs(diff_r) 
-            # rt5 = math.sqrt(5)
-            # # -- Grad K --
-            # grad_K_xstar_x = -sigma2 * (5.0 * diff_r/(3*l**2)) * (1 + rt5*r/l) * torch.exp(-rt5*r/l)
+            # -- Noisy K --
+            K_xx = GP_model.covar_module(train_x, train_x).evaluate().detach()
+            obs_noise = m52_gaussian_likelihood.noise.detach()
+            K_xx_noisy = K_xx + obs_noise*torch.eye(len(train_x)) # K + variance*I
+            print(f"K_xx_noisy {K_xx_noisy.size()}\n")
 
-            # # -- Noisy K --
-            # K_xx = GP_model.covar_module(training_x,training_x).evaluate().detach()
-            # obs_noise = m52_gaussian_likelihood.noise.detach()
-            # K_xx_noisy = K_xx + obs_noise*torch.eye(len(training_x)) # K + variance*I
-            # print(f"K_xx_noisy {K_xx_noisy.size()}\n")
+            posterior = GP_model(torch.tensor([X_gp_noisy.x, X_gp_noisy.y], dtype=torch.float32).reshape(1,2))     
+            h_mean = posterior.mean             # SDF estimate
+            h_var  = posterior.variance         # SDF variance
+            h_std  = torch.sqrt(h_var)
 
-            # # -- alpha = K^-1 * y --
-            # alpha = torch.linalg.solve(K_xx_noisy, training_y) 
-            # # NOTE: Gradient Mean
-            # grad_mean = grad_K_xstar_x @ alpha # [grad_K][alpha]
-            # print(f" SDF Gradient Mean: {grad_mean}") 
+            grad_h, grad_h_covariance = gp_helpers.sdf_gp_gradient(GP_model, m52_gaussian_likelihood, test_x.float(), train_x.float(), train_y.float())
+            grad_h = torch.tensor(grad_h, dtype=torch.float32)
 
-            # # -- Finding d2K(x*, x*) -- 
-            # r_star = torch.abs(test_x.unsqueeze(1) - test_x.unsqueeze(0))
-            # d2K_dxstar_xstar = -(5/(3*l**2))*sigma2 * (1 + rt5*r_star/l - 5*r_star**2/l**2) * torch.exp(-rt5*r_star/l)
-            # grad2_K_xstar_xstar = - d2K_dxstar_xstar 
-            # middle_term =torch.linalg.solve(K_xx_noisy, grad_K_xstar_x.T) # K^-1 ^ grad_K(x*,x)
+            # -- PROBABILISTIC SAFE SDF --
+            h_safe = h_mean - 2.0 * h_std # 2 std deviations -> 95% confidence
+            # -- CBF Condition --
+                # . h_dot(x,y) >= - alpha1 * h
+                # . grad_h(x,y) * [dxdt , dydt].T >= - alpha1 * h
+                # . Lf * h(x,y) + Lg * h(x,y) + alpha1 * h(x,y)  >= 0 
+            vel_xy = torch.tensor([V*torch.cos(torch.tensor(X_gp_noisy.theta)), V*torch.sin(torch.tensor(X_gp_noisy.theta))], dtype=float)
+            vel_xy = torch.tensor(vel_xy, dtype=torch.float32)
+            Lf_h = grad_h @ vel_xy
+            Lg_h = 0.0
+            u_gp_optimal = optimal_control(X_gp_noisy, Kp=Kp, goal_xy=noisy_gp_circle_obstacle)
             
-            # # NOTE: Gradient Covariance
-            # cov_grad_K = grad2_K_xstar_xstar -grad_K_xstar_x @ middle_term
-            # print(f" SDF Gradient Covariance: {cov_grad_K}")
         print(f"Computed gradient mean {1} and gradient Covariance {1}")
-        breakpoint()
         # -- GIBO Acquisition function (Find next x,y based on most uncertain point)--
-        diff_r_old = theta_t.unsqueeze(1) - training_x.unsqueeze(0)
-        r_old = torch.abs(diff_r_old)
-        grad2_K_tt = -(5*sigma2 /(3*l**2)) # theta_t - theta_t = 0 -> simplified gradient
-        grad_K_tx_old = -sigma2 * (5.0 * diff_r_old/(3*l**2)) * (1 + rt5*r_old/l) * torch.exp(-rt5*r_old/l)
-        K_xx_inv_K_tx = torch.linalg.solve(K_xx_noisy, grad_K_tx_old.T)
-        cov_old = grad2_K_tt - grad_K_tx_old @ K_xx_inv_K_tx
+        diff_r_old = theta_xy.unsqueeze(1) - train_x.unsqueeze(0)
+        r_old = torch.norm(diff_r_old, dim=-1, keepdim=True)
+        grad2_K_tt = -(5*sigma2 /(3*l**2)) # theta_xy - theta_xy = 0 -> simplified gradient
+        grad2_K_tt = torch.eye(2) * grad2_K_tt # <-- convert to I, 2x2 to fit num cols of data
+        grad_K_tx_old = -sigma2 * (5.0 * diff_r_old/(3*l**2)) * (1 + rt5*r_old/l) * torch.exp(-rt5*r_old/l) # (1, 161, 2)
+        grad_K_tx_old = grad_K_tx_old.squeeze(0) # (161,2)
+        K_xx_inv_K_tx = torch.linalg.solve(K_xx_noisy, grad_K_tx_old) # (2, 2)
+        cov_old = grad2_K_tt - grad_K_tx_old.T @ K_xx_inv_K_tx
         best_acq_value = -torch.inf
         next_qp = None
-        # -- (7) For m = 1, ... M -- 
-        for i, query_point in enumerate(test_x): # using the test data as the points to sample.   
-            training_x_new = torch.cat((training_x, query_point.unsqueeze(0)), dim=0) # append the query point to the end
-            K_xx_new = GP_model.covar_module(training_x_new, training_x_new).evaluate().detach()
+        # -- (7) query over the new grid space -- TODO: maybe sort these poll points to only be in the direction of the obstacle to save iteration loops
 
-            # -- grad2 K(theta_t, theta_t)
-            grad2_K_tt = -(5*sigma2 /(3*l**2)) # theta_t - theta_t = 0 -> simplified gradient
+        grid_x = grid_x.flatten(0) # (8,8) -> (64, 1)
+        grid_y = grid_y.flatten(0) # (8,8) -> (64, 1)
+        gridspace = torch.stack([grid_x, grid_y], dim = 1) # (64, 2)
+        for i, query_point in enumerate(gridspace): # using the test data as the points to sample.   
+            train_x_new = torch.cat((train_x, query_point.unsqueeze(0)), dim=0) # append the query point to the end
+            K_xx_new = GP_model.covar_module(train_x_new, train_x_new).evaluate().detach()
 
-            # -- grad1 K (theta_t, X) --
-            diff_r_new = theta_t.unsqueeze(1) - training_x_new.unsqueeze(0) # ??
+            # -- grad2 K(theta_xy, theta_xy)
+            grad2_K_tt = -(5*sigma2 /(3*l**2)) # theta_xy - theta_xy = 0 -> simplified gradient
+            grad2_K_tt = grad2_K_tt * torch.eye(2)
+            # -- grad1 K (theta_xy, X) --
+            diff_r_new = theta_xy.unsqueeze(1) - train_x_new.unsqueeze(0) # ??
             r_new = torch.abs(diff_r_new)
 
-            K_xx_noisy_new = K_xx_new + obs_noise*torch.eye(len(training_x_new))
-            grad_K_tx_new  = -sigma2 * (5.0 * diff_r_new/(3*l**2)) * (1 + rt5*r_new/l) * torch.exp(-rt5*r_new/l)
+            K_xx_noisy_new = K_xx_new + obs_noise*torch.eye(len(train_x_new))
+            grad_K_tx_new  = -sigma2 * (5.0 * diff_r_new/(3*l**2)) * (1 + rt5*r_new/l) * torch.exp(-rt5*r_new/l) # (1, 162, 2)
+            grad_K_tx_new = grad_K_tx_new.squeeze(0) # (162,2)
 
-            K_inv_Ktx = torch.linalg.solve(K_xx_noisy_new,grad_K_tx_new.T)
-            cov_new = grad2_K_tt - grad_K_tx_new @ K_inv_Ktx
+            K_inv_Ktx = torch.linalg.solve(K_xx_noisy_new,grad_K_tx_new) # (1, 162, 2)
+            K_inv_Ktx = K_inv_Ktx.squeeze(0) # (162, 2)
+
+            # -- New Covariance -- 
+            cov_new = grad2_K_tt - grad_K_tx_new.T @ K_inv_Ktx # (2,2)
             tr_cov_new = torch.trace(cov_new)
             tr_cov_old = torch.trace(cov_old)
+
             acq_function = tr_cov_old - tr_cov_new
-            # -- (8) get query point "theta_t" --
+            # -- (8) get query point "theta_xy" --
             if acq_function > best_acq_value: 
                 # Extract the max acquisition function value + store the kernel/ grad_kernel values
                 best_acq_value = acq_function
                 next_qp = query_point
         # -- (9) Sample Noisy Objective Function -- 
-        training_x = torch.cat((training_x, next_qp.unsqueeze(0)), dim=0)
-        new_noise = torch.tensor(rng.normal(0.0, 0.5), dtype=training_x.dtype)
-        y_gp = torch.sin(math.pi*next_qp) + next_qp + new_noise
-        training_y = torch.cat((training_y, y_gp.unsqueeze(0)), dim=0)
-        # -- Updata theta_t at n+1 guess --
-        K_xx = GP_model.covar_module(training_x, training_x).evaluate().detach()
-        K_xx_noisy = K_xx + obs_noise * torch.eye(len(training_x))
-        diff_r_theta = theta_t.unsqueeze(1) - training_x.unsqueeze(0)
-        r_theta = torch.abs(diff_r_theta)
+        sdf_qp = sdf(robot_x=next_qp[0].item(), robot_y=next_qp[1].item(), circle_pts=noisy_gp_circle_obstacle, Noisy=True, noise=noise)[0]
+        h_gp = torch.tensor([sdf_qp])
+        # -- (10) Extend Data Set to include next query point --
+        train_x = torch.cat((train_x, next_qp.unsqueeze(0)), dim=0) # (163, 2)
+        train_y = torch.cat((train_y, h_gp), dim=0)
+
+        # -- Updata theta_xy (next point to query) at n+1 guess --
+        K_xx = GP_model.covar_module(train_x, train_x).evaluate().detach()
+        K_xx_noisy = K_xx + obs_noise * torch.eye(len(train_x))
+        diff_r_theta = theta_xy.unsqueeze(1) - train_x.unsqueeze(0)
+        r_theta = torch.norm(diff_r_theta, dim=-1, keepdim=True)
         grad_K_theta_x = -sigma2 * (5.0 * diff_r_theta/(3*l**2)) * (1 + rt5*r_theta/l) * torch.exp(-rt5*r_theta/l)
+        grad_K_theta_x = grad_K_theta_x.squeeze(0) # (162, 2)
         # -- (10) Update the posterior probability distribution of ∇θJ. -- 
-        alpha = torch.linalg.solve(K_xx_noisy, training_y)
-        grad_mu_theta_t = grad_K_theta_x @ alpha
-        theta_t = torch.clamp((theta_t + step_size * grad_mu_theta_t.squeeze()), 
+        alpha = torch.linalg.solve(K_xx_noisy, train_y)
+        grad_mu_theta_xy = grad_K_theta_x.T @ alpha
+        breakpoint()
+
+        theta_xy = torch.clamp((theta_xy + step_size * grad_mu_theta_xy.squeeze()), 
                               min=start_x, 
                               max=end_x).detach()
         # -- move sample forward -- 
-        print(f"Point: {samples_fwd} theta_(t + 1): {theta_t}")      
+        print(f"Point: {samples_fwd} theta_(t + 1): {theta_xy}")      
         samples_fwd = samples_fwd + 1
-        
-
         
         # -- Find u_nom with CBF -- 
         alpha1 = 1.0
         alpha2 = 1.5
-        u_final = cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, waypoint)
-        noisy_u_final = cbf(alpha1, alpha2, X_noisy, closest_noisy_idx, h_noisy, circle_obstacle, Kp, V, waypoint)
+        u_final = conventional_cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, waypoint)
+        noisy_u_final = conventional_cbf(alpha1, alpha2, X_noisy, closest_noisy_idx, h_noisy, circle_obstacle, Kp, V, waypoint)
         u_data.append(u_final)
         noisy_u_data.append(noisy_u_final)
 
@@ -404,13 +436,14 @@ def main():
         X_noisy = rk4_step(X_noisy, V, t, dt, noisy_u_final)
         print(f"Current u (no noise): {u_final}")
         print(f"Current u (noisy): {noisy_u_final}")
-        robot_pos.append([X.x, X.y])
-        noisy_robot_pos.append([X_noisy.x, X_noisy.y])
-        # -- Check if Waypoint Reached --
+
+        # -- Check if Waypoint Reached -- (Function this after gibo) TODO
         dx = abs(waypoint[0] - X.x)
         dy = abs(waypoint[1] - X.y)
         dx_noisy = abs(waypoint[0] - X_noisy.x)
         dy_noisy = abs(waypoint[1] - X_noisy.y)
+        dx_gp = abs(waypoint[0] - X_gp_noisy.x)
+        dy_gp = abs(waypoint[1] - X_gp_noisy.y)
         if math.sqrt(dx**2 + dy**2) < 0.05 or goal1_reached:
             # -- Stay at Waypoint once reached --
             X.x = waypoint[0]
@@ -421,7 +454,12 @@ def main():
             X_noisy.x = waypoint[0]
             X_noisy.y = waypoint[1]
             goal2_reached = True
-        if goal1_reached and goal2_reached:
+        if math.sqrt(dx_gp**2 + dy_gp**2) < 0.1 or gp_reached:
+            # -- Stay at Waypoint once reached --
+            X_gp_noisy.x = waypoint[0]
+            X_gp_noisy.y = waypoint[1]
+            gp_reached = True
+        if goal1_reached and goal2_reached and gp_reached:
             break
         # -- Increase Sim. Time --
         t += dt

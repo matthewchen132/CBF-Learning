@@ -10,7 +10,7 @@ import pkg.gp_simple as gp_simple
 class gp_helpers():
     def __init__():
         print("Hi")
-    def sdf_gp_gradient(GP_model, likelihood, test_x, training_x, training_y):
+    def sdf_gp_gradient(GP_model, likelihood, test_x, train_x, train_y):
         '''
         params:
          - GP_model: gpytorch model
@@ -18,24 +18,27 @@ class gp_helpers():
          - train_x: lidar data (N,2) + current x,y (1,2) <- [N+1,2]
          - train_y: surface of obstacle (M,1) + min_signed_distance (1,1) [M+1, 1]
         '''
-        K_xstar_x = GP_model.covar_module(test_x,training_x).evaluate().detach()
+        K_xstar_x = GP_model.covar_module(test_x,train_x).evaluate().detach()
         l = GP_model.covar_module.base_kernel.lengthscale.detach()
-        diff_r  = (test_x.unsqueeze(1) - training_x.unsqueeze(0))
+        diff_r  = (test_x.unsqueeze(1) - train_x.unsqueeze(0))
         print(f"diff_r {diff_r.size()}")
-        r = torch.abs(diff_r) 
+        r = torch.norm(diff_r, dim=-1, keepdim=True)
+
         sigma2 = GP_model.covar_module.outputscale.detach()
         rt5 = math.sqrt(5)
         # -- Grad K --
         grad_K_xstar_x = -sigma2 * (5.0 * diff_r/(3*l**2)) * (1 + rt5*r/l) * torch.exp(-rt5*r/l)
+        grad_K_xstar_x = grad_K_xstar_x.squeeze(0).transpose(0, 1) # Resize for matrix ops
+
 
         # -- Noisy K --
-        K_xx = GP_model.covar_module(training_x,training_x).evaluate().detach()
+        K_xx = GP_model.covar_module(train_x,train_x).evaluate().detach()
         obs_noise = likelihood.noise.detach()
-        K_xx_noisy = K_xx + obs_noise*torch.eye(len(training_x)) # K + variance*I
+        K_xx_noisy = K_xx + obs_noise*torch.eye(len(train_x)) # K + variance*I
         print(f"K_xx_noisy {K_xx_noisy.size()}\n")
 
         # -- alpha = K^-1 * y --
-        alpha = torch.linalg.solve(K_xx_noisy, training_y) 
+        alpha = torch.linalg.solve(K_xx_noisy, train_y) 
         # NOTE: Gradient Mean
         grad_mean = grad_K_xstar_x @ alpha # [grad_K][alpha]
         print(f" SDF Gradient Mean: {grad_mean}") 
@@ -49,3 +52,4 @@ class gp_helpers():
         # NOTE: Gradient Covariance
         cov_grad_K = grad2_K_xstar_xstar -grad_K_xstar_x @ middle_term
         print(f" SDF Gradient Covariance: {cov_grad_K}")
+        return grad_mean, cov_grad_K

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import gpytorch as gp
 import matplotlib.pyplot as plt
-from python_scripts.pkg.gp_simple import m52_example # my GP
+from pkg.gp_simple import m52_example # my GP
 
 '''
 Steps after Stage 4:
