@@ -1,9 +1,15 @@
-Tasks
-https://docs.gpytorch.ai/en/stable/index.htm
-Stage 0: Setup (DONE)
+# Purpose:
+Compare performance of conventional CBFs vs. CBFs learned via Gaussian Processes. 
+Incorporate "smart polling" into learning-based GP-CBFs, intelligently selecting an optimal point to explore by ranking points of high covariance.
 
-Create a repo.
-Pick one GP library -> Chose GPyTorch
+https://arxiv.org/pdf/2106.11899
+# 4/05: Zero-noise CBF vs noisy CBF vs learned-CBF under varying simulated sensor noise conditions.
+<img width="250" height="200" alt="image" src="https://github.com/user-attachments/assets/04d7d6f4-5843-4a32-8320-63e42ae6191a" />
+<img width="250" height="200" alt="image" src="https://github.com/user-attachments/assets/0eedc0af-3398-4176-883a-8b3c963453f2" />
+
+
+
+
 
 # 3/24: Conventional CBF performance under noise:
 <img width="548" height="451" alt="image" src="https://github.com/user-attachments/assets/173dd130-b97f-491b-bbad-eecf73851c47" />
