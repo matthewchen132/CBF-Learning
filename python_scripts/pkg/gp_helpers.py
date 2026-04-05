@@ -2,7 +2,6 @@ import torch
 import gpytorch as gp
 import numpy as np
 import matplotlib.pyplot as plt
-import pybullet_data
 import math
 
 import pkg.gp_simple as gp_simple
@@ -53,3 +52,9 @@ class gp_helpers():
         cov_grad_K = grad2_K_xstar_xstar -grad_K_xstar_x @ middle_term
         print(f" SDF Gradient Covariance: {cov_grad_K}")
         return grad_mean, cov_grad_K
+    def GIBO(first_qp, train_x, grid_x, grid_y, sigma2, lengthscale):
+        '''
+        params:
+        first_qp = (x,y) [1,2]
+        '''
+
