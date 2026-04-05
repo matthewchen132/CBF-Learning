@@ -1,6 +1,6 @@
 # Purpose:
 Compare performance of conventional CBFs vs. CBFs learned via Gaussian Processes. 
-Incorporate "smart polling" into learning-based GP-CBFs, intelligently selecting an optimal point to explore by ranking points of high covariance.
+Incorporate "smart polling" into learning-based GP-CBFs, intelligently selecting a next point to explore by choosing a nearby point of high covariance.
 
 https://arxiv.org/pdf/2106.11899
 # 4/05: Zero-noise CBF vs noisy CBF vs learned-CBF under varying simulated sensor noise conditions.
