@@ -65,12 +65,62 @@ def sdf_gp_gradient(GP_model, likelihood, test_x, train_x, train_y):
     cov_grad_K = grad2_K_xstar_xstar -grad_K_xstar_x @ middle_term
     return grad_mean, cov_grad_K
 
-def GIBO(gridspace, X, V, train_x, train_y, GP_model, waypoint, 
-                        l, sigma2, obs_noise, cov_old):
+def make_gridspace(X, wander_range, num_steps):
+    '''
+    Takes in a State X and wander_range to generate around (+/- wander_range)
+    '''
+    x_fwd = X.x
+    y_fwd = X.y
+    x_range = torch.linspace(start=x_fwd-wander_range, end=x_fwd+wander_range, steps=num_steps)
+    y_range = torch.linspace(start=y_fwd-wander_range, end=y_fwd+wander_range, steps=num_steps)
+    grid_x, grid_y = torch.meshgrid(x_range, y_range, indexing='ij') # 8x8 meshgrid
+    return grid_x, grid_y
+
+def GIBO(X, V, train_x, train_y, 
+         GP_model, GP_likelihood, waypoint, 
+         sigma2, l, obs_noise, next_query_point):
     """
     Evaluates gridspace to find the point that maximizes the Trace reduction 
     of the GP Covariance (Information Gain).
     """
+    with torch.enable_grad(), gp.settings.fast_pred_var(): 
+        # (1) -- Create a grid around current position for the robot to select within using GIBO --
+        '''
+        Explanation:
+            - First, GPs provide an estimate of the function mean, and the covariance associated with it.
+            - High Covariance = High uncertainty, Polling information at that point will give us large gains.  
+        '''
+        wander_range = .5
+        grid_x, grid_y = make_gridspace(X, wander_range, num_steps=8)
+        rt5 = math.sqrt(5)
+        # test_x = torch.tensor([X.x, X.y]).reshape(1, 2) # (1, 3)
+        # (2) --  Find Gradient of the Signed Distance Function --
+        '''
+            - To create a good control barrier function, we must not only estimate the surface of the obstacle, 
+            but also the rate of change with which we are approaching dangerous regions.
+            - By finding the gradient, we can enforce a CBF which is safe, yet also allows us to explore the region in a smart manner.
+        '''
+
+        # -- Noisy K --
+        K_xx = GP_model.covar_module(train_x, train_x).evaluate().detach()
+        obs_noise = GP_likelihood.noise.detach()
+        K_xx_noisy = K_xx + obs_noise*torch.eye(len(train_x)) # K + variance*I
+
+    # -- GIBO Acquisition function (Find next x,y based on most uncertain point)--  
+    diff_r_old = next_query_point.unsqueeze(1) - train_x.unsqueeze(0)
+    r_old = torch.norm(diff_r_old, dim=-1, keepdim=True)
+    grad2_K_tt = -(5*sigma2 /(3*l**2)) # next query_p - next query_p = 0 -> simplified gradient
+    grad2_K_tt = torch.eye(2) * grad2_K_tt # <-- convert to I, 2x2 to fit num cols of data
+    grad_K_tx_old = -sigma2 * (5.0 * diff_r_old/(3*l**2)) * (1 + rt5*r_old/l) * torch.exp(-rt5*r_old/l) # (1, 161, 2)
+    grad_K_tx_old = grad_K_tx_old.squeeze(0) # (161,2)
+    K_xx_inv_K_tx = torch.linalg.solve(K_xx_noisy, grad_K_tx_old) # (2, 2)
+    cov_old = grad2_K_tt - grad_K_tx_old.T @ K_xx_inv_K_tx
+
+    # -- Format Gridspace --
+    grid_x = grid_x.flatten(0) # (8,8) -> (64, 1)
+    grid_y = grid_y.flatten(0) # (8,8) -> (64, 1)
+    gridspace = torch.stack([grid_x, grid_y], dim = 1) # (64, 2)
+
     best_acq_value = -float('inf')
     next_qp = None
     tr_cov_old = torch.trace(cov_old)
