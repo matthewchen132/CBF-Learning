@@ -8,13 +8,13 @@ import cvxpy as cp
 from dynamics.state import State
 from dynamics.rk4_integrator import rk4_step
 from helpers.gp_simple import m52_example
-from helpers.gp_helpers import sdf_gp_gradient, acq_func_grad_covariance, acq_func_posterior_covariance, generate_gp_training_data, train_GP, probabilistic_sdf
+from helpers.gp_helpers import sdf_gp_gradient, acq_func_grad_covariance, azra_acq_function, acq_func_posterior_covariance, generate_gp_training_data, train_GP, probabilistic_sdf
 import helpers.helper_functions as hf
 import plotting.plots as plots
 
 '''
 Learning based waypoint navigation with Gaussian Processes 
-and intelligent point selection via an acquisition function.
+and intelligent point selection via selected acquisition function.
 
 '''
 
@@ -24,11 +24,6 @@ def main():
     times = []
     dt = 0.1
     end_time = 20.0
-
-    # - Tracking Arrival at Goal
-    ideal_reached = False
-    noisy_reached = False
-    gp_reached = False
 
     # -- Create goal --
     waypoint = np.array([5.0, 5.0])
@@ -139,7 +134,9 @@ def main():
         # -- Acquisition Function using Posterior Variances --
         next_query_point, best_acq_value = acq_func_posterior_covariance(X=X_gp_noisy, GP_model=GP_model, 
                                     GP_likelihood=m52_gaussian_likelihood, prior_covariance=sigma2)
-        
+        next_query_point, best_acq_value = azra_acq_function(X, V, train_x, GP_model, m52_gaussian_likelihood, sigma2, 
+                                                             sigma2, l, obs_noise, next_query_point, weight=0.5)
+
         u_query_point = hf.optimal_control(X_gp_noisy, Kp, next_query_point.flatten().tolist())
         query_points.append(next_query_point[0].tolist())
 
@@ -176,8 +173,10 @@ def main():
         cos_t = torch.cos(torch.tensor(X_gp_noisy.theta))
         sin_t = torch.sin(torch.tensor(X_gp_noisy.theta))
         vel_xy = torch.tensor([V*cos_t, V*sin_t], dtype=torch.float32)
-        Lf_h = grad_h @ vel_xy
-        Lg_h = V * (-grad_h[0] * sin_t + grad_h[1] * cos_t) # grad_h * dVdtheta
+        f_x = vel_xy
+        Lf_h = grad_h @ f_x
+        # -- Recover the effect of Angular Velocity (u) -- 
+        LgLf_h = V * (-grad_h[0] * sin_t + grad_h[1] * cos_t) # d(Lf_h)d_theta -> Chain rule gets us theta_dot = angular velocity
 
         # -- GP-GIBO-CBF -- (Adaptive Weight)
         u_gp_nom = hf.optimal_control(X_gp_noisy, Kp=Kp, goal_xy=waypoint)
@@ -185,14 +184,16 @@ def main():
         k_dist = 1. # Tuning parameter for weight
         weight = 1.0 - np.exp(-r_norm * k_dist) 
         u_blended_nom = (1-weight) * u_gp_nom + weight * u_query_point
-        u_gp_cbf = hf.solve_cbf_qp(u_blended_nom, Lf_h.item(), Lg_h.item(), h_safe.item(), alpha1, max_ang_vel)
+        # u_gp_cbf = hf.solve_cbf_qp(u_blended_nom, Lf_h.item(), LgLf_h.item(), h_safe.item(), alpha1, max_ang_vel) # u_safe
+        # TODO: solve_SOCP is WIP
+        u_gp_cbf = hf.solve_SOCP(u_blended_nom, Lf_h.item(), LgLf_h.item(), h_safe.item(), h_variance.item(), f_x, alpha1, max_ang_vel) # u_safe
 
         # -- Take the maximum of GP-defined control and the optimal control input "u_gp_optimal" -- 
         # -- Find u_nom with CBF -- (Conventional)
         u_final = hf.conventional_cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, waypoint)
         u_noisy_final = hf.conventional_cbf(alpha1, alpha2, X_noisy, closest_noisy_idx, h_noisy, circle_obstacle, Kp, V, waypoint)
 
-        # - Append "u" data -
+        # -- Append Logging Data --
         u_data.append(u_final)
         u_noisy_data.append(u_noisy_final)
         u_gp_data.append(u_gp_cbf)
@@ -221,7 +222,8 @@ def main():
 
         # -- Increase Sim. Time by "dt" --
         t += dt
-    print(f"Zero-noise finish time: {ideal_time}, Noisy CBF finish time: {noisy_time}, GP-CBF finish time: {gp_time}")
+
+    print(f"Zero-noise finish time: {round(ideal_time, 2)}, Noisy CBF finish time: {round(noisy_time)}, GP-CBF finish time: {round(gp_time,2)}")
 
     # - Sort Arrays for Logging - 
     robot_pos = np.array(robot_pos)
