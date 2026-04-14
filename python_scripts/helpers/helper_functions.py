@@ -177,20 +177,65 @@ def conventional_cbf(alpha1, alpha2, X, closest_idx, h, circle_obstacle, Kp, V, 
 
 def solve_cbf_qp(u_nom, Lf_h, Lg_h, h_safe, alpha1, u_max):
     '''
-    Uses cvxpy to optimize a control input "u"
-    based on the Lie derivatives learned by GP
+    Optimizes a SOCP to find a control input "u_safe" based on:
+    1: Lie derivatives defining dynamics and control learned by the GP
+    2: u_nom, a weighted control input balancing 
+              exploration (acquisition function) and avoidance (CBF)
 
     params:
-    - Lf_h, Lf_g: Lie derivatives w.r.t (f,g)  s.t  f_dot(x) = f(x) + g(x) * u)
-    - h_safe: h - N * std_dev  |  gp_predicted signed distance with some margin
+    - Lf_h: Lie derivative w.r.t (f)  s.t  f_dot(x) = f(x) + g(x) * u) -- Dynamics Drift Term
+    - Lf_g: Lie derivative w.r.t (g)  s.t  f_dot(x) = f(x) + g(x) * u) -- Control Input Term
+        - (Lf_g * Lf*h) Enables controllability.
+
+    - h_safe: h - N * std_dev (Predicted signed distance with Safety Margin)
     - alpha1: selected constant for CBF condition
-    - u_max: actuator_limit defined
+    - u_max: Actuator limit
     '''
-    u = cp.Variable(1)
-    QP_objective = cp.Minimize(0.5 * cp.sum_squares(u - u_nom))
+    u_safe = cp.Variable(1)
+    QP_objective = cp.Minimize(0.5 * cp.sum_squares(u_safe- u_nom))
 
     # Lf * h(x,y) + Lg_h * u + alpha1(h(x,y))  >= 0 
-    constraints = [Lf_h + Lg_h*u+ alpha1*h_safe >= 0, u <= u_max, u >= -u_max]
+    constraints = [Lf_h + Lg_h* u_safe+ alpha1*h_safe >= 0, u_safe <= u_max, u_safe >= -u_max]
+    optimization_problem = cp.Problem(QP_objective, constraints)
+    try:
+        optimization_problem.solve(solver=cp.OSQP, verbose=False)
+
+        if u_safe.value[0] is not None:
+            # print(f"using CBF control (GP): {u.value[0]}")
+            return u_safe.value[0]
+        else:
+            # print(f"Infeasible QP, using nominal control (GP): {u.value[0]}")
+            return(float(u_nom))
+    except:
+        # print("using nominal control (GP)")
+        return float(u_nom)
+    
+def solve_SOCP(u_nom, Lf_h, LgLf_h, h_safe, h_std, f_x, alpha1, u_max):
+    '''
+    Optimizes a SOCP for a control input "u" based on:
+    1: Lie derivatives defining dynamics and control learned by the GP
+    2: u_nom, a weighted control input balancing 
+              exploration (acquisition function) and avoidance (CBF)
+
+    params:
+    - Lf_h: Lie derivative w.r.t (f)  s.t  f_dot(x) = f(x) + g(x) * u) -- Dynamics Drift Term
+    - LfLf_g: Lie derivative dLf_dtheta used to recover the theta term. -- Control Input Term
+        - (Lf_g * Lf*h) Enables controllability.
+
+    - h_safe: h - N * std_dev (Predicted signed distance with Safety Margin)
+    - alpha1: selected constant for CBF condition
+    - u_max: Actuator limit
+    '''
+    u = cp.Variable(1)
+    QP_objective = cp.Minimize(0.5 * cp.sum_squares(u- u_nom))
+    # TODO: Need to check this condition for the SOCP
+    # Lf_h = grad_mu_h * f(x)
+
+    # NOTE:
+    # AZRA's Eq: Lf_h + Lg_h * u -  || f(x) + g(x)*u ||* Error_h + alpha1(h(x,y))  >= 0 
+    # MY Eq: Lf_h + LgLf_h * u + alpha1(h(x,y))  >= 0 
+    
+    constraints = [Lf_h + LgLf_h*u + alpha1*h_safe >= 0, u <= u_max, u >= -u_max]
     optimization_problem = cp.Problem(QP_objective, constraints)
     try:
         optimization_problem.solve(solver=cp.OSQP, verbose=False)
