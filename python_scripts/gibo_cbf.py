@@ -8,19 +8,13 @@ import cvxpy as cp
 from dynamics.state import State
 from dynamics.rk4_integrator import rk4_step
 from helpers.gp_simple import m52_example
-from helpers.gp_helpers import sdf_gp_gradient, GIBO, generate_gp_training_data, train_GP, probabilistic_sdf
+from helpers.gp_helpers import sdf_gp_gradient, acq_func_grad_covariance, acq_func_posterior_covariance, generate_gp_training_data, train_GP, probabilistic_sdf
 import helpers.helper_functions as hf
 import plotting.plots as plots
 
 '''
 Learning based waypoint navigation with Gaussian Processes 
-and intelligent point selection via acquisition function.
-
- -- General Workflow of this Script --
-1) Train the GP on the 160 LiDAR points (0 distance) + 1 Robot point (current distance).
-2) Predict at the Robot's point to get h_mean and h_std.
-3) Calculate the Gradient.
-4) Plug h_safe and grad_h into the CBF.
+and intelligent point selection via an acquisition function.
 
 '''
 
@@ -51,7 +45,8 @@ def main():
 
     X = State(x_i, y_i, theta_i) # Noiseless conventional CBF navigation
     X_noisy = State(x_i, y_i, theta_i) # Noisy conventional CBF navigation
-    X_gp_noisy = State(x_i, y_i, theta_i) # GP-GIBO-based CBF and navigation
+    X_gp_noisy = State(x_i, y_i, theta_i) # GP-GIBO-based CBF and navigation | Trace Covariance Selection
+    X_gp_post_variance = State(x_i, y_i, theta_i) # GP-GIBO-based CBF and navigation | Posterior Covariance Selection
 
     # -- Spawn Obstacles (Circular) --
     circle_obstacle = hf.spawn_circle(3.5, 3.5, r=1.6)
@@ -62,6 +57,7 @@ def main():
     robot_pos = []
     noisy_robot_pos = []
     gp_robot_pos = []
+    gp_post_variance_pos = []
 
     # -- Booleans to Check if Goal is Reached --
     ideal_reached = False
@@ -123,17 +119,26 @@ def main():
         else:
             train_GP(n=50, GP_optimizer=m52_optimizer, GP_model=GP_model, GP_mll=m52_mll, train_x=train_x, train_y=train_y)
 
+
+        # -- Set our GP and likelihood into evaluation mode (training done) --
         GP_model.eval()
         m52_gaussian_likelihood.eval()
+
+
         test_x = torch.tensor([X.x, X.y]).reshape(1, 2) # (1, 3)
         sigma2 = GP_model.covar_module.outputscale.detach()
         l = GP_model.covar_module.base_kernel.lengthscale.detach()
         rt5 = math.sqrt(5)
         obs_noise = m52_gaussian_likelihood.noise.detach() 
-        
-        next_query_point, best_acq_value = GIBO(X=X_gp_noisy, V=V, train_x=train_x, train_y=train_y, 
-                                           GP_model=GP_model, GP_likelihood=m52_gaussian_likelihood, 
-                                           waypoint=waypoint, sigma2=sigma2, l=l, obs_noise=obs_noise, next_query_point=next_query_point)
+
+        # -- Acquisition Function using Gradient Variances --
+        # next_query_point, best_acq_value = acq_func_grad_covariance(X=X_gp_noisy, V=V, train_x=train_x, train_y=train_y, 
+        #                                    GP_model=GP_model, GP_likelihood=m52_gaussian_likelihood, 
+        #                                    waypoint=waypoint, sigma2=sigma2, l=l, obs_noise=obs_noise, next_query_point=next_query_point)
+
+        # -- Acquisition Function using Posterior Variances --
+        next_query_point, best_acq_value = acq_func_posterior_covariance(X=X_gp_noisy, GP_model=GP_model, 
+                                    GP_likelihood=m52_gaussian_likelihood, prior_covariance=sigma2)
         
         u_query_point = hf.optimal_control(X_gp_noisy, Kp, next_query_point.flatten().tolist())
         query_points.append(next_query_point[0].tolist())
