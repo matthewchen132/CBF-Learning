@@ -176,12 +176,19 @@ def acq_func_posterior_covariance(X, GP_model, GP_likelihood, prior_covariance):
 
 def azra_acq_function(X, V, train_x, GP_model, GP_likelihood, prior_covariance, sigma2, l, obs_noise, next_query_point, weight):
     '''
-    Acq 1: Maximizes the posterior covariance.
-    Acq 2: Maximizes the trace of gradient covariance.
-    
+    Acq 1: Maximizes the trace of gradient covariance.
+    Acq 2: Maximizes the posterior covariance.
     Weights Acquitision Functions 1/2 to find a balanced maximum
     '''
-    # -- Acq 1: Maximizes Trace of Gradient Covariance -- 
+    # -- Acq 1 --
+    # -- Format Gridspace into 8x8 grid Centered around current position --
+    wander_range = .5
+    grid_x, grid_y = make_gridspace(X, wander_range, num_steps=8)
+    grid_x = grid_x.flatten(0) # (8,8) -> (64, 1)
+    grid_y = grid_y.flatten(0) # (8,8) -> (64, 1)
+    gridspace = torch.stack([grid_x, grid_y], dim = 1) # (64, 2)
+    rt5 = np.sqrt(5)
+
     with torch.enable_grad(), gp.settings.fast_pred_var(): 
         # -- Noisy K --
         K_xx = GP_model.covar_module(train_x, train_x).evaluate().detach()
@@ -189,72 +196,60 @@ def azra_acq_function(X, V, train_x, GP_model, GP_likelihood, prior_covariance, 
         K_xx_noisy = K_xx + obs_noise*torch.eye(len(train_x)) # K + variance*I
 
     # -- Find the Old Covariance --  
-    rt5 = math.sqrt(5)
     diff_r_old = next_query_point.unsqueeze(1) - train_x.unsqueeze(0)
     r_old = torch.norm(diff_r_old, dim=-1, keepdim=True)
-    grad2_K_qp_qp = -(5*sigma2 /(3*l**2)) # next_qp - next_qp = 0 -> simplified gradient
-    grad2_K_qp_qp = torch.eye(2) * grad2_K_qp_qp # <- convert (2, 2) 2d X-Y data
+    prior_grad_cov = torch.eye(2) * -(5*sigma2 /(3*l**2)) # <- convert (2, 2) 2d X-Y data
+
     grad_K_tx_old = -sigma2 * (5.0 * diff_r_old/(3*l**2)) * (1 + rt5*r_old/l) * torch.exp(-rt5*r_old/l) # (1, 161, 2)
     grad_K_tx_old = grad_K_tx_old.squeeze(0) # (161,2)
     K_xx_inv_K_tx = torch.linalg.solve(K_xx_noisy, grad_K_tx_old) # (2, 2)
-    cov_old = grad2_K_qp_qp - grad_K_tx_old.T @ K_xx_inv_K_tx
+    cov_old = prior_grad_cov - grad_K_tx_old.T @ K_xx_inv_K_tx
 
-    # -- Format Gridspace into 8x8 grid Centered around current position --
-    wander_range = .5
-    grid_x, grid_y = make_gridspace(X, wander_range, num_steps=8)
-    grid_x = grid_x.flatten(0) # (8,8) -> (64, 1)
-    grid_y = grid_y.flatten(0) # (8,8) -> (64, 1)
-    gridspace = torch.stack([grid_x, grid_y], dim = 1) # (64, 2)
-
-    best_acq_value = -float('inf')
-    next_qp = None
-    rt5 = np.sqrt(5)
 
     # -- Loop Through each Point in the Gridspace --
-    acq_vals_list = []
-    for query_point in gridspace: 
-               
-        # 2. Kernel Math for the New data set (Current + query point)
+    acq1_vals_list = []
+    for query_point in gridspace:                
         train_x_new = torch.cat((train_x, query_point.unsqueeze(0)), dim=0)
-        
         # -- grad2 K(query_point, query_point) --
         grad2_K_qp_qp = -(5 * sigma2 / (3 * l**2)) * torch.eye(2)
-
         # -- grad1 K (query_point, train_x_new) --
         diff = query_point.unsqueeze(0) - train_x_new # (N+1, 2)
         r = torch.norm(diff, dim=1, keepdim=True) # (N+1, 1)
-
         # Matern 5/2 Gradient logic
         K_xx_new = GP_model.covar_module(train_x_new, train_x_new).evaluate().detach()
         K_xx_noisy_new = K_xx_new + obs_noise * torch.eye(len(train_x_new))
         
-        # Gradient of Kernel: dK/dx
         grad_K_tx_new = -sigma2 * (5.0 * diff / (3 * l**2)) * (1 + rt5 * r / l) * torch.exp(-rt5 * r / l)
         K_inv_Ktx = torch.linalg.solve(K_xx_noisy_new, grad_K_tx_new) 
+        info_gain_grad = grad_K_tx_new.T @ K_inv_Ktx
         
-        # -- Covariance --
-        cov_new = grad2_K_qp_qp - grad_K_tx_new.T @ K_inv_Ktx 
-        tr_cov_new = torch.trace(cov_new)
-
-        acq_function = - tr_cov_new
-        acq_vals_list.append(acq_function)
-    acq_vals_tensor = (weight) * torch.tensor(acq_vals_list)
-    acq1_gridspace = acq_vals_tensor.view(8,8)
+        # -- I_x: tr_info_gain -- 
+        tr_info_gain = torch.trace(info_gain_grad)
+        acq1_val = tr_info_gain
+        acq1_vals_list.append(acq1_val)
+    I_x = torch.tensor(acq1_vals_list)
+    acq1_vals = I_x / I_x.max()
+    weighted_acq1_vals = (weight) * torch.tensor(acq1_vals)
+    weighted_acq1_gridspace = weighted_acq1_vals.view(8,8)
 
     # -- Acq 2: Maximizes Posterior Covariance --
-    wander_range = .5
-    grid_x, grid_y = make_gridspace(X, wander_range, num_steps=8)
-    grid_x = grid_x.flatten(0) # (8,8) -> (64, 1)
-    grid_y = grid_y.flatten(0) # (8,8) -> (64, 1)
-    gridspace = torch.stack([grid_x, grid_y], dim = 1) # (64, 2)
-
     with torch.no_grad():
         gridspace_pred = GP_model(gridspace)
-        posterior_variance = GP_likelihood(gridspace_pred)
-    posterior_variance = posterior_variance.variance
-    acq2_gridspace = (prior_covariance - posterior_variance).view(8,8)
-    breakpoint()
- 
+        posterior_variance = GP_likelihood(gridspace_pred).variance
+    max_variance = posterior_variance.max()
+    # acq2_gridspace = (prior_covariance - posterior_variance).view(8,8)
+    # -- σ^2 / σ_max^2 Term -- 
+    acq2_gridspace = (posterior_variance/max_variance).view(8,8)
+    final_acq_gridspace = weighted_acq1_gridspace + (1-weight) * acq2_gridspace
+    final_acq_gridspace = final_acq_gridspace.flatten(0)
+    best_acq_value = -float('inf')
+    next_qp = None
+
+    for best_idx, acq_val in enumerate(final_acq_gridspace):
+        if acq_val > best_acq_value:
+            next_qp = gridspace[best_idx].reshape(1,2)
+    
+    return next_qp, best_acq_value
 
 def generate_gp_training_data(gp_obstacle_data, X, visible_pts):
     gp_obstacle_data = torch.tensor(visible_pts) # (N, 2)
@@ -270,7 +265,6 @@ def probabilistic_sdf(h_mean, h_variance, n_std_deviations):
     '''
     Returns a Signed Distance = h_mean - (Std. Deviation) x (user-defined #)
     '''
-
     h_std  = torch.sqrt(h_variance)
     h_safe = h_mean - n_std_deviations * h_std
     return h_safe
