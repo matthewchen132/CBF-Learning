@@ -95,7 +95,6 @@ def sdf(robot_x, robot_y, circle_pts, Noisy, noise):
     . robot_x, robot_y: current x,y position
     . circle_pts: Nx2 numpy array
     '''
-    rng = np.random.default_rng(0)
     if Noisy:
         noise_copy = noise[0:circle_pts.shape[0]]
         circle_pts_copy[:,0] += noise_copy

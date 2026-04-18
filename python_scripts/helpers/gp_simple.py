@@ -4,15 +4,17 @@ class RBF_example(gp.models.ExactGP): # AKA squared exponential
     '''
     Squared Exponential Kernel
     '''
-    def __init__(self, train_x, train_y, likelihood):
+    def __init__(self, train_x, train_y, likelihood, l_prior, output_prior):
         super(RBF_example, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
         
         # initial ccnditions
         # large l -> strong effects from all data
         # small l -> strong effects from close points
-        lengthscale_prior = gp.priors.GammaPrior(3.0, 1) # (a,b) : lengthscale = a/b
-        outputscale_prior = gp.priors.GammaPrior(4.0, .17) # (a,b) : outputscale = a/b
+        # lengthscale_prior = gp.priors.GammaPrior(3.0, 1) # (a,b) : lengthscale = a/b
+        # outputscale_prior = gp.priors.GammaPrior(4.0, .17) # (a,b) : outputscale = a/b
+        lengthscale_prior = l_prior # (a,b) : lengthscale = a/b
+        outputscale_prior = output_prior # (a,b) : outputscale = a/b
         self.covar_module = gp.kernels.ScaleKernel(gp.kernels.RBFKernel
                                                          (lengthscale_prior=lengthscale_prior,
                                                          ),outputscale_prior=outputscale_prior

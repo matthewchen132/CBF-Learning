@@ -145,10 +145,11 @@ def acq_func_grad_covariance(X, V, train_x, train_y,
             next_qp = query_point.clone().reshape(1, 2)
     return next_qp, best_acq_value
 
-def acq_func_posterior_covariance(X, GP_model, GP_likelihood, prior_covariance):
+def acq_func_posterior_covariance(X, GP_model, GP_likelihood, prior_covariance, M):
     """
     Evaluates gridspace to select a query point based on 
     maximum posterior covariance difference
+    M - Gridspace (GIBO)
     """
 
     # 1: Create an (8, 8) Gridspace Centered around Position 
