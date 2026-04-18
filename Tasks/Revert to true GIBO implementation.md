@@ -6,7 +6,7 @@
     [ ] Extend State to have {x, y, theta}
     [ ] Verify Lie Derivative math
 [ ] Clean Code
-    [ ] Simulator Class
+    [X] Simulator Class
     [X] GIBO control Class
 [ ] Robotic manipulator, implement dynamics and GIBO
      [ ] CBF based on angle limit:  r = pisin(t), pi/2 sin(4t)
