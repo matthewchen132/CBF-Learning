@@ -15,21 +15,16 @@ import plotting.plots as plots
 
 from core.simulation import Simulation
 from core.control import GIBO_control, Noise
-'''
-
--- New Gibo --
-1) State to X Y theta
-2) Verify Lie derivative math
-3) SE Kernel
-'''
-
 
 '''
+GIBO Algorithm Lines 1-10 are roughly implemented, with a rough outline for lines 11-13. 
+
 Questions for Azra:
  - Should I train off of X,Y or X,Y, theta?
    -> As we talked about, with a signed distance, there is not a clear correlation between theta and distance.
    -> for now, I am using X,Y because it simplifies the logic, improves performance, and eliminates any unclear coupling between theta and signed distance.
- - GIBO Line 6: 
+
+ - Should we do some form of pre-training or calibration before running GIBO on an empty dataset?
 '''
 
 def main():
@@ -54,7 +49,7 @@ def main():
 
     # -- GIBO Line 2: Set a theta_initial (next_query_point) and emtpy dataset D = {} -- 
     GIBO_Controller.D = {"X": [], "Y" : []}
-    next_query_point = torch.tensor([[0.2, 0.2]], dtype=float) #
+    next_query_point = torch.tensor([[0.2, 0.2]], dtype=float)
 
     # -- GIBO Line 3: for t = 0, ..., N do --
     while sim.is_running():
@@ -75,16 +70,7 @@ def main():
         l = GP_model.covar_module.base_kernel.lengthscale.detach()
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
-        # TODO: Maybe readjust lengthscale and outputscale on the first few points??
-        # RBF_mll = gp.mlls.ExactMarginalLogLikelihood(RBF_gaussian_likelihood, GP_model) # finds probability of the function found by GP by comparing to sampled data.
-        # RBF_optimizer = torch.optim.Adam(
-        #         list(GP_model.parameters()) + list(RBF_gaussian_likelihood.parameters()),
-        #         lr=0.05
-        #     )
-        # train_GP(n=200, GP_optimizer=RBF_optimizer, GP_model=GP_model, GP_mll=RBF_mll, train_x=GIBO_Controller.D["X"], train_y=GIBO_Controller.D["X"])
-
         # -- Step 7: For m = 1,2, ... M, -> 2nd Loop is baked into "SE_acq_func_grad_covariance"
-        # -> SLACK me if this doesn't make sense.
         M = GIBO_Controller.return_gridspace(GIBO_Controller.X)
 
         # -- Step 8: Get query point = argmax(acq_function)  
@@ -92,10 +78,11 @@ def main():
                                                                           train_x=train_x, train_y=train_y, 
                                                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
                                                                         waypoint=GIBO_Controller.waypoint, sigma2=sigma2, l=l, 
-                                                                        obs_noise=obs_noise, next_query_point=next_query_point)
+                                                                        obs_noise=obs_noise, next_query_point=next_query_point, M=M)
 
         # -- Step 9: Sample Noisy Objective Funmction sdf = J(query_point) + noise
         sdf_GIBO_point = GIBO_Controller.sdf(X=State(next_query_point[0], next_query_point[1], 0.0), Noise=GIBO_Controller.Noise)
+
         # - 9i: Corresponding control input to get to query point. -
         u_query_point = hf.optimal_control(GIBO_Controller.X, GIBO_Controller.Kp, next_query_point.flatten().tolist())
 
@@ -104,11 +91,23 @@ def main():
         GIBO_Controller.D["Y"].append(sdf_GIBO_point)
 
         # -- Step 11: Update the posterior probability distribution of ∇θJ.
-
+        # TODO 
+        
         # Step 12: End Inner For Loop
-    # Step 13: Gradient ascent, or any other gradient based optimizer. X_t+1 = X_t + η·E ∇_X J X=Xt
-    next_query_point = next_query_point + step_size * grad_h
+        # TODO
 
+    # Step 13: Gradient ascent, or any other gradient based optimizer. X_t+1 = X_t + η·E ∇_X J X=Xt
+    #TODO
+
+
+
+
+
+
+
+
+
+    # TODO: Will be converted or deleted next session -- 4/18
     #     # -- Updata next_query_point --
     #     K_xx = GP_model.covar_module(train_x, train_x).evaluate().detach()
     #     K_xx_noisy = K_xx + obs_noise * torch.eye(len(train_x))
