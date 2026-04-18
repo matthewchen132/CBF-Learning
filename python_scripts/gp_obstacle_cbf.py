@@ -130,13 +130,13 @@ def main():
         obs_noise = m52_gaussian_likelihood.noise.detach() 
 
         # -- Acquisition Function using Gradient Variances --
-        # next_query_point, best_acq_value = acq_func_grad_covariance(X=X_gp_noisy, V=V, train_x=train_x, train_y=train_y, 
-        #                                    GP_model=GP_model, GP_likelihood=m52_gaussian_likelihood, 
-        #                                    waypoint=waypoint, sigma2=sigma2, l=l, obs_noise=obs_noise, next_query_point=next_query_point)
+        next_query_point, best_acq_value = acq_func_grad_covariance(X=X_gp_noisy, V=V, train_x=train_x, train_y=train_y, 
+                                           GP_model=GP_model, GP_likelihood=m52_gaussian_likelihood, 
+                                           waypoint=waypoint, sigma2=sigma2, l=l, obs_noise=obs_noise, next_query_point=next_query_point)
 
         # -- Acquisition Function using Posterior Variances --
-        next_query_point, best_acq_value = acq_func_posterior_covariance(X=X_gp_noisy, GP_model=GP_model, 
-                                    GP_likelihood=m52_gaussian_likelihood, prior_covariance=sigma2)
+        # next_query_point, best_acq_value = acq_func_posterior_covariance(X=X_gp_noisy, GP_model=GP_model, 
+        #                             GP_likelihood=m52_gaussian_likelihood, prior_covariance=sigma2)
 
         # -- Azra's Acquisition Function -- 
         # next_query_point, best_acq_value = azra_acq_function(X_gp_noisy, V, train_x, GP_model, m52_gaussian_likelihood, sigma2, 
@@ -242,7 +242,7 @@ def main():
     fig, axes = plt.subplots(3, 1, figsize=(10, 12)) 
     plots.plot_trajectories(axes, circle_obstacle, waypoint, robot_pos, 
                             noisy_robot_pos, gp_robot_pos, n_std_deviations, query_points) # Plots Trajectory and obstacle
-    plots.plot_error_wrt_time(axes, times, dist_data, dist_noisy_data, dist_gp_data) # Plots distance from goal w.r.t time
+    plots.plot_error_wrt_time(axes, times, dist_data, dist_noisy_data, dist_gp_data, label="Distance Error vs. Time") # Plots distance from goal w.r.t time
     plots.plot_control_wrt_time(axes, u_data, u_noisy_data, u_gp_data, times) # Plots control effort w.r.t time
     plt.tight_layout() # Prevents label overlap
     plt.show()

@@ -9,7 +9,7 @@ import cvxpy as cp
 from dynamics.state import State
 from dynamics.rk4_integrator import rk4_step
 from helpers.gp_simple import RBF_example
-from helpers.gp_helpers import sdf_gp_gradient, acq_func_grad_covariance, azra_acq_function, acq_func_posterior_covariance, generate_gp_training_data, train_GP, probabilistic_sdf
+from helpers.gp_helpers import SE_acq_func_grad_covariance, azra_acq_function, acq_func_posterior_covariance
 import helpers.helper_functions as hf
 import plotting.plots as plots
 
@@ -24,13 +24,21 @@ from core.control import GIBO_control, Noise
 '''
 
 
+'''
+Questions for Azra:
+ - Should I train off of X,Y or X,Y, theta?
+   -> As we talked about, with a signed distance, there is not a clear correlation between theta and distance.
+   -> for now, I am using X,Y because it simplifies the logic, improves performance, and eliminates any unclear coupling between theta and signed distance.
+ - GIBO Line 6: 
+'''
+
 def main():
     # i. Initialize Sim and Objects
     sim = Simulation(dt=0.1, end_time=20.0)
     GIBO_Controller = GIBO_control(V=1.0, Kp=4.0, alpha1 = 1.0)
     noise = Noise(GIBO_Controller.rng, noise_std_dev=0.05, num_std_deviations=1.0)
 
-    # -- Step 1: Setup GIBO Hyperparameters -- 
+    # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
     # a. stepsize η
     step_size = 0.1
     # b. hyperpriors for GP hyperparameters 
@@ -41,58 +49,65 @@ def main():
     # c. number of iterations N = 201 (20 seconds, 0.1s timestep)
     # d. number of samples for a gradient estimate M = 
 
-    # NOTE: May Need Offline Tuning 
     GP_model.eval()
     RBF_gaussian_likelihood.eval()
 
-    # -- Step 2: Set a theta_initial (next_query_point) and emtpy dataset D = {} -- 
-    GIBO_Controller.D = []
+    # -- GIBO Line 2: Set a theta_initial (next_query_point) and emtpy dataset D = {} -- 
+    GIBO_Controller.D = {"X": [], "Y" : []}
     next_query_point = torch.tensor([[0.2, 0.2]], dtype=float) #
 
-    # -- Step 3: for t = 0, ..., N do --
+    # -- GIBO Line 3: for t = 0, ..., N do --
     while sim.is_running():
-        # -- Step 4: Sample Noisy Objective Function | sdf = J(X_t) + ϵt --
-        signed_distance, _ = GIBO_Controller.sdf(GIBO_Controller.Noise)
-        y = signed_distance
+        # -- GIBO Line 4: Sample Noisy Objective Function | sdf = J(X_t) + ϵt --
+        signed_distance, _ = GIBO_Controller.sdf(X=GIBO_Controller.X, Noise=GIBO_Controller.Noise)
 
-        # -- Step 5: Extend Dataset D
-        GIBO_Controller.D["X"].append([GIBO_Controller.X])
-        breakpoint()
-    #     # -- Step 6: Construct Training Data for GIBO / GP -- (Leave Out?)
-    #     RBF_mll = gp.mlls.ExactMarginalLogLikelihood(RBF_gaussian_likelihood, GP_model) # finds probability of the function found by GP by comparing to sampled data.
-    #     RBF_optimizer = torch.optim.Adam(
-    #             list(GP_model.parameters()) + list(RBF_gaussian_likelihood.parameters()),
-    #             lr=0.05
-    #         )
-    #     train_GP(n=200, GP_optimizer=RBF_optimizer, GP_model=GP_model, GP_mll=RBF_mll, train_x=train_x, train_y=train_y)
-    #     closest_gp_idx = hf.sdf(GIBO_Controller.X.x, GIBO_Controller.X.y, noisy_gp_circle_obstacle, Noisy=True, noise=noise)[1]
-    #     visible_pts = hf.return_visible_pts(noisy_gp_circle_obstacle, closest_gp_idx)
-    #     injected_noise = GIBO_Controller.rng.normal(0, Noise.noise_std_dev, size=visible_pts.shape) 
-    #     noisy_visible_pts = visible_pts + injected_noise
-    #     gp_obstacle_data = torch.tensor(noisy_visible_pts) # (N, 2)
+        # -- GIBO Line 5: Extend Dataset D (NOTE: Using X,Y over X,Y, theta.  See comment above.)
+        GIBO_Controller.D["X"].append([GIBO_Controller.X.x, GIBO_Controller.X.y])
+        GIBO_Controller.D["Y"].append([signed_distance])
+        train_x = torch.tensor(GIBO_Controller.D["X"])
+        train_y = torch.tensor(GIBO_Controller.D["Y"])
 
-    #     # -- GP Training Data --
-    #     train_x, train_y = generate_gp_training_data(gp_obstacle_data, GIBO_Controller.X, visible_pts)
-    #     test_x = torch.tensor([GIBO_Controller.X.x, GIBO_Controller.X.y]).reshape(1, 2) # (1, 3)
-    #     sigma2 = GP_model.covar_module.outputscale.detach()
-    #     l = GP_model.covar_module.base_kernel.lengthscale.detach()
-    #     obs_noise = RBF_gaussian_likelihood.noise.detach() 
+        # -- GIBO Line 6: Construct Training Data for GIBO / GP (Leave Out?) --
+        GP_model.set_train_data(inputs=train_x, 
+                                targets=train_y,
+                                strict=False)
+        sigma2 = GP_model.covar_module.outputscale.detach()
+        l = GP_model.covar_module.base_kernel.lengthscale.detach()
+        obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
-    #     # -- Step 7: For m = 1,2, ... M, -> Baked into "acq_func_posterior_covariancee"
-    #     M = GIBO_Controller.return_M()
+        # TODO: Maybe readjust lengthscale and outputscale on the first few points??
+        # RBF_mll = gp.mlls.ExactMarginalLogLikelihood(RBF_gaussian_likelihood, GP_model) # finds probability of the function found by GP by comparing to sampled data.
+        # RBF_optimizer = torch.optim.Adam(
+        #         list(GP_model.parameters()) + list(RBF_gaussian_likelihood.parameters()),
+        #         lr=0.05
+        #     )
+        # train_GP(n=200, GP_optimizer=RBF_optimizer, GP_model=GP_model, GP_mll=RBF_mll, train_x=GIBO_Controller.D["X"], train_y=GIBO_Controller.D["X"])
 
-    #     # -- Step 8: get query point = argmax(acq_function)  
-    #     next_query_point, _ = acq_func_posterior_covariance(X=GIBO_Controller.X, GP_model=GP_model, 
-    #                                 GP_likelihood=RBF_gaussian_likelihood, prior_covariance=sigma2, M=M)
-        
-    #     # -- Step 9: Sample Noisy Objective Funmction sdf = J(query_point) + noise
-    #     sdf_reading = 0.0
-    #     u_query_point = hf.optimal_control(GIBO_Controller.X, GIBO_Controller.Kp, next_query_point.flatten().tolist())
-    #     next_query_point = (next_query_point[0].tolist())
+        # -- Step 7: For m = 1,2, ... M, -> 2nd Loop is baked into "SE_acq_func_grad_covariance"
+        # -> SLACK me if this doesn't make sense.
+        M = GIBO_Controller.return_gridspace(GIBO_Controller.X)
 
-    #     # -- Step 10: Extend Data Set to include next query point --
-    #     GIBO_Controller.D.append([])
-    #     # (OLD) train_x, train_y = hf.filter_relevant_data(GIBO_Controller.X, train_x, train_y, max_pts=160)
+        # -- Step 8: Get query point = argmax(acq_function)  
+        next_query_point, _ = GIBO_Controller.SE_acq_func_grad_covariance(X=GIBO_Controller.X, V=GIBO_Controller.V, 
+                                                                          train_x=train_x, train_y=train_y, 
+                                                                        GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
+                                                                        waypoint=GIBO_Controller.waypoint, sigma2=sigma2, l=l, 
+                                                                        obs_noise=obs_noise, next_query_point=next_query_point)
+
+        # -- Step 9: Sample Noisy Objective Funmction sdf = J(query_point) + noise
+        sdf_GIBO_point = GIBO_Controller.sdf(X=State(next_query_point[0], next_query_point[1], 0.0), Noise=GIBO_Controller.Noise)
+        # - 9i: Corresponding control input to get to query point. -
+        u_query_point = hf.optimal_control(GIBO_Controller.X, GIBO_Controller.Kp, next_query_point.flatten().tolist())
+
+        # -- Step 10: Extend Data Set to include next query point --
+        GIBO_Controller.D["X"].append(next_query_point)
+        GIBO_Controller.D["Y"].append(sdf_GIBO_point)
+
+        # -- Step 11: Update the posterior probability distribution of ∇θJ.
+
+        # Step 12: End Inner For Loop
+    # Step 13: Gradient ascent, or any other gradient based optimizer. X_t+1 = X_t + η·E ∇_X J X=Xt
+    next_query_point = next_query_point + step_size * grad_h
 
     #     # -- Updata next_query_point --
     #     K_xx = GP_model.covar_module(train_x, train_x).evaluate().detach()
@@ -166,7 +181,6 @@ def main():
     #                           fig_num=2, label="GIBO-control") 
     # plt.tight_layout() # Prevents label overlap
     # plt.show()
-    # print(f"GP-CBF finish time: {round(sim.curr_time,2)}")
 
 if __name__ == "__main__":
     main()

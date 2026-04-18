@@ -75,6 +75,7 @@ def make_gridspace(X, wander_range, num_steps):
     grid_x, grid_y = torch.meshgrid(x_range, y_range, indexing='ij') # 8x8 meshgrid
     return grid_x, grid_y
 
+
 def acq_func_grad_covariance(X, V, train_x, train_y, 
          GP_model, GP_likelihood, waypoint, 
          sigma2, l, obs_noise, next_query_point):
@@ -90,13 +91,14 @@ def acq_func_grad_covariance(X, V, train_x, train_y,
 
     # -- Find the Old Covariance --  
     rt5 = math.sqrt(5)
-    diff_r_old = next_query_point.unsqueeze(1) - train_x.unsqueeze(0)
+    x_eval = torch.tensor([[X.x, X.y]], dtype=torch.float32)
+    diff_r_old = x_eval.unsqueeze(1) - train_x.unsqueeze(0)
     r_old = torch.norm(diff_r_old, dim=-1, keepdim=True)
     grad2_K_qp_qp = -(5*sigma2 /(3*l**2)) # next_qp - next_qp = 0 -> simplified gradient
     grad2_K_qp_qp = torch.eye(2) * grad2_K_qp_qp # <- convert (2, 2) 2d X-Y data
     grad_K_tx_old = -sigma2 * (5.0 * diff_r_old/(3*l**2)) * (1 + rt5*r_old/l) * torch.exp(-rt5*r_old/l) # (1, 161, 2)
     grad_K_tx_old = grad_K_tx_old.squeeze(0) # (161,2)
-    K_xx_inv_K_tx = torch.linalg.solve(K_xx_noisy, grad_K_tx_old) # (2, 2)
+    K_xx_inv_K_tx = torch.linalg.solve(K_xx_noisy, grad_K_tx_old) # (N, 2)
     cov_old = grad2_K_qp_qp - grad_K_tx_old.T @ K_xx_inv_K_tx
 
     # -- Format Gridspace into 8x8 grid Centered around current position --
@@ -114,8 +116,8 @@ def acq_func_grad_covariance(X, V, train_x, train_y,
     # -- Loop Through each Point in the Gridspace --
     for query_point in gridspace:
         # 1. Hemisphere Filter (Keep in direction of robot velocity)
-        if not in_hemisphere(X, V, grid_point=query_point):
-            continue  
+        # if not in_hemisphere(X, V, grid_point=query_point):
+        #     continue  
         
         # 2. Kernel Math for the New data set (Current + query point)
         train_x_new = torch.cat((train_x, query_point.unsqueeze(0)), dim=0)
@@ -139,13 +141,13 @@ def acq_func_grad_covariance(X, V, train_x, train_y,
         cov_new = grad2_K_qp_qp - grad_K_tx_new.T @ K_inv_Ktx 
         tr_cov_new = torch.trace(cov_new)
 
-        acq_function = - tr_cov_new # NOTE: try with sigma_^2 instead of gradient covariance
+        acq_function = tr_cov_old - tr_cov_new
         if acq_function > best_acq_value: 
             best_acq_value = acq_function
             next_qp = query_point.clone().reshape(1, 2)
     return next_qp, best_acq_value
 
-def acq_func_posterior_covariance(X, GP_model, GP_likelihood, prior_covariance, M):
+def acq_func_posterior_covariance(X, GP_model, GP_likelihood, prior_covariance):
     """
     Evaluates gridspace to select a query point based on 
     maximum posterior covariance difference
