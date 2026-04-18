@@ -16,6 +16,11 @@ import plotting.plots as plots
 Learning based waypoint navigation with Gaussian Processes 
 and intelligent point selection via selected acquisition function.
 
+ -- GIBO --
+1) State to X Y theta
+2) Verify Lie derivative math
+3) SE Kernel
+
 '''
 
 def main():
@@ -118,8 +123,6 @@ def main():
         # -- Set our GP and likelihood into evaluation mode (training done) --
         GP_model.eval()
         m52_gaussian_likelihood.eval()
-
-
         test_x = torch.tensor([X.x, X.y]).reshape(1, 2) # (1, 3)
         sigma2 = GP_model.covar_module.outputscale.detach()
         l = GP_model.covar_module.base_kernel.lengthscale.detach()
@@ -134,8 +137,10 @@ def main():
         # -- Acquisition Function using Posterior Variances --
         next_query_point, best_acq_value = acq_func_posterior_covariance(X=X_gp_noisy, GP_model=GP_model, 
                                     GP_likelihood=m52_gaussian_likelihood, prior_covariance=sigma2)
-        next_query_point, best_acq_value = azra_acq_function(X, V, train_x, GP_model, m52_gaussian_likelihood, sigma2, 
-                                                             sigma2, l, obs_noise, next_query_point, weight=0.5)
+
+        # -- Azra's Acquisition Function -- 
+        # next_query_point, best_acq_value = azra_acq_function(X_gp_noisy, V, train_x, GP_model, m52_gaussian_likelihood, sigma2, 
+        #                                                      sigma2, l, obs_noise, next_query_point, weight=1.0)
 
         u_query_point = hf.optimal_control(X_gp_noisy, Kp, next_query_point.flatten().tolist())
         query_points.append(next_query_point[0].tolist())
@@ -174,6 +179,7 @@ def main():
         sin_t = torch.sin(torch.tensor(X_gp_noisy.theta))
         vel_xy = torch.tensor([V*cos_t, V*sin_t], dtype=torch.float32)
         f_x = vel_xy
+        # NOTE:
         Lf_h = grad_h @ f_x
         # -- Recover the effect of Angular Velocity (u) -- 
         LgLf_h = V * (-grad_h[0] * sin_t + grad_h[1] * cos_t) # d(Lf_h)d_theta -> Chain rule gets us theta_dot = angular velocity
@@ -184,9 +190,9 @@ def main():
         k_dist = 1. # Tuning parameter for weight
         weight = 1.0 - np.exp(-r_norm * k_dist) 
         u_blended_nom = (1-weight) * u_gp_nom + weight * u_query_point
-        # u_gp_cbf = hf.solve_cbf_qp(u_blended_nom, Lf_h.item(), LgLf_h.item(), h_safe.item(), alpha1, max_ang_vel) # u_safe
+        u_gp_cbf = hf.solve_cbf_qp(u_blended_nom, Lf_h.item(), LgLf_h.item(), h_safe.item(), alpha1, max_ang_vel) # u_safe
         # TODO: solve_SOCP is WIP
-        u_gp_cbf = hf.solve_SOCP(u_blended_nom, Lf_h.item(), LgLf_h.item(), h_safe.item(), h_variance.item(), f_x, alpha1, max_ang_vel) # u_safe
+        # u_gp_cbf = hf.solve_SOCP(u_blended_nom, Lf_h.item(), LgLf_h.item(), h_safe.item(), h_variance.item(), f_x, alpha1, max_ang_vel) # u_safe
 
         # -- Take the maximum of GP-defined control and the optimal control input "u_gp_optimal" -- 
         # -- Find u_nom with CBF -- (Conventional)
