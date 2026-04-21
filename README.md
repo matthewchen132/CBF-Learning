@@ -5,7 +5,6 @@ Incorporate "smart polling" into learning-based GP-CBFs, intelligently selecting
 Paper on GIBO: https://arxiv.org/pdf/2106.11899
 # 4/05: Zero-noise CBF vs noisy CBF vs learned-CBF under varying simulated sensor noise conditions.
 <img width="250" height="200" alt="image" src="https://github.com/user-attachments/assets/04d7d6f4-5843-4a32-8320-63e42ae6191a" />
-<img width="250" height="200" alt="image" src="https://github.com/user-attachments/assets/0eedc0af-3398-4176-883a-8b3c963453f2" />
 
 
 # 3/24: Conventional CBF performance under noise:
