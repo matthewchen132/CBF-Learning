@@ -66,10 +66,10 @@ def sdf_gp_gradient(GP_model, likelihood, test_x, train_x, train_y):
 
 def make_gridspace(X, wander_range, num_steps):
     '''
-    Takes in a State X and wander_range to generate around (+/- wander_range)
+    Takes in a LookaheadState X and wander_range to generate around (+/- wander_range)
     '''
-    x_fwd = X.x
-    y_fwd = X.y
+    x_fwd = X.xp
+    y_fwd = X.yp
     x_range = torch.linspace(start=x_fwd-wander_range, end=x_fwd+wander_range, steps=num_steps)
     y_range = torch.linspace(start=y_fwd-wander_range, end=y_fwd+wander_range, steps=num_steps)
     grid_x, grid_y = torch.meshgrid(x_range, y_range, indexing='ij') # 8x8 meshgrid

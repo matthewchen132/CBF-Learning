@@ -33,12 +33,14 @@ class GIBO_control():
      - noise
     '''
     def __init__(self, Kp, V, alpha_cbf, M_number_of_queries, dt):
-        self.D = {"X": [], "sdf" : []} # x, y, theta
+        self.D = {"X": [], "Y": []}
+        self.dist_to_goal = np.inf
         self.goal_reached = False
         self.rng = np.random.default_rng(seed=2)
         self.actuator_limit = hf.actuator_limit(4.0) # 4 rad/s actuator limiting.
         self.M_number_of_queries = M_number_of_queries
 
+        # -- Control --
         self.V = V
         self.alpha_cbf = alpha_cbf
         self.u = 0.0
@@ -48,7 +50,7 @@ class GIBO_control():
         self.Noise = Noise(self.rng, noise_std_dev=0.05, num_std_deviations=1.0)
         self.Obstacle = Obstacle(self.Noise)
         self.waypoint = np.array([5.0, 5.0])
-        self.X = LookaheadState(0.0, 0.0, 0.0, l=V)
+        self.X = LookaheadState(0.0, 0.0, 0.0, l=V*dt)
 
     def sdf(self, X, Noise):
         '''
@@ -91,7 +93,19 @@ class GIBO_control():
         grid_y = grid_y.flatten(0) # (8,8) -> (64, 1)
         gridspace = torch.stack([grid_x, grid_y], dim = 1) # (64, 2)
         return gridspace
-    
+    def return_dist_vec(self):
+        '''
+
+        X: object of interest, type LookaheadState
+        waypoint: 2d list of desired XY waypoint (2,1)
+
+        returns r_norm
+        - r_norm: norm of r
+        '''
+        r = [self.X.x - self.waypoint[0], self.X.y - self.waypoint[1]]
+        self.dist_to_goal = np.linalg.norm(r)
+
+
     def CBF_SDF(self, posterior):
         '''
         Returns a signed distance based on h_safe - variance
@@ -125,7 +139,7 @@ class GIBO_control():
 
     def acquisition_function(self, train_x, train_y, 
                                     GP_model, GP_likelihood, waypoint, 
-                                    sigma2, l, obs_noise, next_query_point, M):
+                                    sigma2, l, obs_noise, next_query_point, M, m):
         """
         Evaluates gridspace (M = 1,2,...M) to select a query point based on moving to the point of maximal gradient covariance.
         Also returns
@@ -140,31 +154,29 @@ class GIBO_control():
         # Prior Gradient Covariance (Constant for RBF) <- Constant, can leave out of trace maximization loop.
         grad2_K_prior = (sigma2 / l**2) * torch.eye(2)
 
+        best_acq_value = -float("inf")
+        next_qp = M[0]  # safe default
         for qp in M:
             dist = qp - train_x
             K_qp_x = GP_model.covar_module(qp.unsqueeze(0), train_x).evaluate().detach()
             grad_K_x_qp = -(1/l**2) * (K_qp_x.T * dist)
 
             tr_query_point = torch.trace(grad_K_x_qp.T @ K_inv @ grad_K_x_qp)
-            
-            best_acq_value = -float("inf")
+
             if tr_query_point > best_acq_value:
                 best_acq_value = tr_query_point
                 next_qp = qp
-        return next_qp
+        print(f"Next Query Point: {next_qp}, m: {m}, Posterior Covariance of QP: {best_acq_value}")
+        return next_qp, best_acq_value
     
     def solve_cbf_qp(self, u_GIBO, h_safe, grad_h, alpha_cbf, X):
         '''
-        Optimizes a QP to find a control input "u_safe".
-
+        Optimizes a QP to find a control input "u_safe"
 
         params:
         - u_GIBO: angular velocity commanded by GIBO to minimize posterior covariance
-        - h_safe: h - N * std_dev (Predicted signed distance with Safety Margin)
+        - h_safe: Predicted signed distance with Safety Margin
         - alpha_cbf: selected constant for CBF condition
-        - u_max: Actuator limit
-
-
         '''
         l = X.l
         theta = X.theta
@@ -173,18 +185,26 @@ class GIBO_control():
 
         dhdx = grad_h[0]
         dhdy = grad_h[1]
-        h_dot = (dhdx*np.cos(theta) + dhdy*np.sin(theta))*self.V + (dhdx*(-l*np.sin(theta)) +dhdy*l*np.cos(theta)) * u_safe
-        constraints = [h_dot >= alpha_cbf * h_safe, u_safe <= self.actuator_limit, u_safe >= -self.actuator_limit]
+        # h_dot = (dhdx*np.cos(theta) + dhdy*np.sin(theta))*self.V + (dhdx*(-l*np.sin(theta)) +dhdy*l*np.cos(theta)) * u_safe
+
+        V_term = (dhdx*np.cos(theta) + dhdy*np.sin(theta))
+        angular_vel_term = (dhdx*(-l*np.sin(theta)) +dhdy*l*np.cos(theta))
+        h_dot = V_term * self.V + (dhdx*(-l*np.sin(theta)) +dhdy*l*np.cos(theta)) * u_safe
+        constraints = [h_dot >= -alpha_cbf * h_safe, u_safe <= self.actuator_limit, u_safe >= -self.actuator_limit]
         optimization_problem = cp.Problem(QP_objective, constraints)
         try:
             optimization_problem.solve(solver=cp.OSQP, verbose=False)
-
             if u_safe.value[0] is not None:
                 return u_safe.value[0]
             else:
                 # print(f"Infeasible QP, using nominal control (GP): {u.value[0]}")
                 return(float(u_GIBO))
-        except:
-            # print("using nominal control (GP)")
-            return float(u_GIBO)
+        except Exception:
+            pass
+
+        # QP infeasible — most common cause: Lg_h ≈ 0 (heading directly at obstacle).
+        # Emergency: turn in the direction that grows Lg_h fastest.
+        # d(Lg_h)/dθ = −Lf_h/V, so the best turn direction is sign(−Lf_h).
+        print(f"[CBF] infeasible  h={V_term:.3f}  Lf_h={V_term:.3f}  Lg_h={angular_vel_term:.4f}, Generating an emergency turn")
+        return self.actuator_limit * np.sign(-V_term) if abs(V_term) > 1e-6 else float(u_GIBO)
 

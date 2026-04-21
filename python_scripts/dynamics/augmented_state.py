@@ -17,12 +17,14 @@ class LookaheadState:
         return LookaheadState(
             self.x + other.x,
             self.y + other.y,
-            self.theta + other.theta
+            self.theta + other.theta,
+            self.l
         )
 
     def __mul__(self, scalar):
         return LookaheadState(
             self.x * scalar,
             self.y * scalar,
-            self.theta * scalar
+            self.theta * scalar,
+            self.l
         )
