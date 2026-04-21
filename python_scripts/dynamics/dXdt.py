@@ -1,5 +1,6 @@
 import numpy as np
 from dynamics.state import State
+from dynamics.augmented_state import LookaheadState
 
 def dXdt(X, V, u):
     '''
