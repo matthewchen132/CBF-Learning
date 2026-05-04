@@ -4,8 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 
-import helpers.gp_simple
-from helpers.helper_functions import in_hemisphere
+import src.helpers.gp_simple
+from src.helpers.helper_functions import in_hemisphere
 
 def train_GP(n, GP_optimizer, GP_model, GP_mll, train_x, train_y ):
     '''
