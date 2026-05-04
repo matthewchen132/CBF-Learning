@@ -1,5 +1,5 @@
-from dynamics.state import State
-from dynamics.dXdt import dXdt
+from src.dynamics.state import State
+from src.dynamics.dXdt import dXdt
 
 def rk4_step(X, V, t, dt, u):
     '''

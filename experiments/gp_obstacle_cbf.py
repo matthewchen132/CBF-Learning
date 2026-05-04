@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 import math
 import cvxpy as cp
 
-from dynamics.state import State
-from dynamics.rk4_integrator import rk4_step
-from helpers.gp_simple import m52_example
-from helpers.gp_helpers import sdf_gp_gradient, acq_func_grad_covariance, azra_acq_function, acq_func_posterior_covariance, generate_gp_training_data, train_GP, probabilistic_sdf
-import helpers.helper_functions as hf
-import plotting.plots as plots
+from src.dynamics.state import State
+from src.dynamics.rk4_integrator import rk4_step
+from src.helpers.gp_simple import m52_example
+from src.helpers.gp_helpers import sdf_gp_gradient, acq_func_grad_covariance, azra_acq_function, acq_func_posterior_covariance, generate_gp_training_data, train_GP, probabilistic_sdf
+import src.helpers.helper_functions as hf
+import src.plotting.plots as plots
 
 '''
 Learning based waypoint navigation with Gaussian Processes 

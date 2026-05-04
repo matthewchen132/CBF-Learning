@@ -8,16 +8,16 @@ import matplotlib.pyplot as plt
 import math
 import cvxpy as cp
 
-from dynamics.state import State
-from dynamics.augmented_state import LookaheadState
-from dynamics.rk4_integrator import rk4_step
-from helpers.gp_simple import RBF_example
-from helpers.gp_helpers import azra_acq_function, acq_func_posterior_covariance
-import helpers.helper_functions as hf
-import plotting.plots as plots
+from src.dynamics.state import State
+from src.dynamics.augmented_state import LookaheadState
+from src.dynamics.rk4_integrator import rk4_step
+from src.helpers.gp_simple import RBF_example
+from src.helpers.gp_helpers import azra_acq_function, acq_func_posterior_covariance
+import src.helpers.helper_functions as hf
+import src.plotting.plots as plots
 
-from core.simulation import Simulation
-from core.control import GIBO_control, Noise
+from src.core.simulation import Simulation
+from src.core.control import GIBO_control, Noise
 
 '''
 GIBO Algorithm Implementation
@@ -27,6 +27,8 @@ Notes:
     - Sometimes performance improves, other times it does not. m=5 mproved smoothness, while m=7 didnt.
  - Tweaking lengthscale_prior and output_scale prior doesnt affect the results at all.
  - Decreasing Velocity sometimes has us crash into the CBF, sometimes it results in very strong performance.
+ - On the inner loop (m=1,2...M) we essentially do a ghost sample of the point without controlling to the point. This may be difficult to implement IRL
+
  
 A Note on Step 6 and Step 13 of GIBO Algorithm
  - [OLD] Step 13: θt+1 = θt + η·E ∇θJ θ=θt ◃Gradient ascent, or any other gradient based optimizer.
@@ -34,13 +36,26 @@ A Note on Step 6 and Step 13 of GIBO Algorithm
  - [?] GIBO Line 6: No GP hyperparameter optimization (Frozen in step 1)
 '''
 
+'''
+mtg:
+ - Query Points on edge of boundary (turning points are most uncertain)
+ 
+Performance criteria
+ 1) posterior covariance reduction along with query points w.r.t time.
+ - plot of time s
+
+ 
+Mathematically guarantess of safety
+Walkthrough of manipulator
+    - SOCP explanation
+'''
 def main():
     # i. Initialize Sim and Objects
     sim = Simulation(dt=0.1, end_time=20.0)
     GIBO = GIBO_control(V=0.6, Kp=4.0, alpha_cbf=.5, M_number_of_queries=6, dt=sim.dt)
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
-    # a. stepsize η
+    # a. stepsize η ()
     step_size = 0.1
     # b. hyperpriors for GP hyperparameters 
     RBF_gaussian_likelihood = gp.likelihoods.GaussianLikelihood()
@@ -87,7 +102,7 @@ def main():
                                                     obs_noise=obs_noise, next_query_point=next_query_point, M=M, m=m)
 
             # -- Step 9: Sample Noisy Objective Function sdf = J(query_point) + noise
-            sdf_query_point, _ = GIBO.sdf(X=LookaheadState(next_query_point[0], next_query_point[1], 0.0, l=0.0), Noise=GIBO.Noise)
+            sdf_query_point, _ = GIBO.sdf(X=LookaheadState(next_query_point[0], next_query_point[1], theta=GIBO.X.theta, l=0.0), Noise=GIBO.Noise)
 
             # -- Step 10: Extend Data Set to include next query point --
             GIBO.D["X"].append(next_query_point.squeeze().tolist())
@@ -102,7 +117,7 @@ def main():
             grad_K = GIBO.compute_grad_K(train_x, GP_model, lengthscale=l)
             expected_grad_SDF = torch.sum(weights * grad_K, dim=0).detach()
 
-        #  -- Step 12: End Inner For Loop --
+        # -- Step 12: End Inner For Loop --
         # -- Step 13 (ADAPTED -> Solves CBF-QP): X_{t+1} = X_t + η·E[∇J | X=X_t] --
         u_nominal = GIBO.optimal_control(GIBO.waypoint.tolist())
         GIBO.u_final = GIBO.solve_cbf_qp(u_GIBO=u_nominal, h_safe=signed_distance,    # SDF at the robot's current lookahead position
@@ -117,7 +132,7 @@ def main():
         # ----------------------------------------------------------
         sim.log_data(X=GIBO.X, u=GIBO.u_final, dist=GIBO.return_dist_vec(),
                      time=sim.curr_time, query_points=next_query_point)
-        sim.break_if_arrived(0.2, GIBO)
+        sim.arrived_at_goal(0.2, GIBO)
         sim.step(print_t=True)
         if GIBO.goal_reached:
             break        

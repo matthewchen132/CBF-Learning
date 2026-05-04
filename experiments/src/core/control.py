@@ -3,9 +3,10 @@ import cvxpy as cp
 import gpytorch as gp
 import torch
 
-import helpers.helper_functions as hf
-import helpers.gp_helpers as gp_hf
-from dynamics.augmented_state import LookaheadState
+import src.helpers.helper_functions as hf
+import src.helpers.gp_helpers as gp_hf
+from src.dynamics.augmented_state import LookaheadState
+from src.dynamics.state import State
 
 
 class Noise():
@@ -53,6 +54,8 @@ class GIBO_control():
         self.X = LookaheadState(0.0, 0.0, 0.0, l=V*dt)
 
     def sdf(self, X, Noise):
+        assert isinstance(X, LookaheadState), "Invalid type for X -- must be of type 'Lookahead State'. "
+
         '''
         -- Line 4: Sample Noisy Objective Function (Signed Distance Function) --
         . Injects Noise into obstacle to return a noisy signed distance
@@ -70,6 +73,8 @@ class GIBO_control():
         return min_dist + injected_noise[min_dist_idx], min_dist_idx
 
     def optimal_control(self, goal_xy):
+        assert isinstance(self.X, LookaheadState), "Invalid type for X -- must be of type 'Lookahead State'. "
+
         '''
         Solves for the optimal control input u
         by finding the instantaneous angular error and doing Kp * angular_error
@@ -83,6 +88,7 @@ class GIBO_control():
         return self.Kp * theta_error # 
 
     def return_gridspace(self):
+
         '''
         Line 7 of GIBO (loop over m = 1,2,...M)
         - Returns gridspace of points "M" to query information gain over.
@@ -138,8 +144,8 @@ class GIBO_control():
         return weights
 
     def acquisition_function(self, train_x, train_y, 
-                                    GP_model, GP_likelihood, waypoint, 
-                                    sigma2, l, obs_noise, next_query_point, M, m):
+                            GP_model, GP_likelihood, waypoint, 
+                            sigma2, l, obs_noise, next_query_point, query_space, m):
         """
         Evaluates gridspace (M = 1,2,...M) to select a query point based on moving to the point of maximal gradient covariance.
         Also returns
@@ -155,8 +161,8 @@ class GIBO_control():
         grad2_K_prior = (sigma2 / l**2) * torch.eye(2)
 
         best_acq_value = -float("inf")
-        next_qp = M[0]  # safe default
-        for qp in M:
+        next_qp = query_space[0]  # safe default
+        for qp in query_space:
             dist = qp - train_x
             K_qp_x = GP_model.covar_module(qp.unsqueeze(0), train_x).evaluate().detach()
             grad_K_x_qp = -(1/l**2) * (K_qp_x.T * dist)
