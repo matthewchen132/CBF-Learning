@@ -4,7 +4,6 @@ import torch
 import gpytorch as gp
 
 
-
 class Noise:
     def __init__(self, rng, noise_std_dev):
         self.rng = rng
@@ -84,7 +83,7 @@ class Manipulator:
 
     def u_nom(self, t: float) -> np.ndarray:
         """
-        Torque Control following reference: 
+        Torque Control following reference:
          - M(r̈ − Kd·ė − Kp·e) + C·θ̇
          - https://arxiv.org/pdf/2503.10953
          """
@@ -170,7 +169,7 @@ class Manipulator:
                 best_val = tr_val
                 next_qp  = qp
         return next_qp, best_val
-    
+
     def random_acq_function(self, train_x, train_y, GP_model, GP_likelihood,
                              sigma2, l, obs_noise, next_query_point, query_space, m):
         """
@@ -184,7 +183,7 @@ class Manipulator:
     # -- HOCBF-QP --
     def solve_hocbf_qp(self, tau_nom: np.ndarray, h: float,
                    grad_h: torch.Tensor) -> np.ndarray:
-    
+
         M_mat = self.inertia_matrix(self.theta[1])
         C_vec = self.coriolis_vector(self.theta[1], self.dtheta)  # (2,) vector C(θ,θ̇)·θ̇
         Minv  = np.linalg.inv(M_mat)

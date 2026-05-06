@@ -13,19 +13,21 @@ Tasks
 
 
 Next Steps (high priority):
-[] Robotic manipulator, implement dynamics and GIBO
-    [] Follow a trajectory under learned safety condition
-    [*] Plots by 1 week from now
-    [] CBF based on angle limit:  r = pisin(t), pi/2 sin(4t)
+[X] Robotic manipulator, implement dynamics and GIBO
+    [X] Follow a trajectory under learned safety condition
+    [X] Plots by 1 week from now
+    [X] CBF based on angle limit:  r = pisin(t), pi/2 sin(4t)
+[] Compare Results to see if meaningful improvement
+    [] GP improvement of covariance over time. We see this visually but can we verify? 
 
+Manipulator Results 05.6:
+ - The random sampling does better than GIBO?
 
 
 
 
 Lower Priority:
 [] Implement
-[] Monte Carlo/gather useful info about performance
-    [] GP improvement of covariance over time. We see this visually but can we verify? 
     [] Baseline vs conventional cbf
     [] Hybrid acq function
 

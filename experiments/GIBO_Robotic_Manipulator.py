@@ -27,8 +27,9 @@ QP safeguarding controller.
 
 def main():
     start_time = time.perf_counter()
+
     # i. Initialize Sim
-    sim = Simulation(dt=0.025, end_time=21)
+    sim = Simulation(dt=0.025, end_time=20)
     # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
@@ -50,19 +51,17 @@ def main():
     # d. number of samples for gradient estimate -> M =
     M_samples = 1
     Arm = Manipulator(alpha_cbf=.5, M_number_of_queries=M_samples, dt=N)
+    n_sigma = 2.0
 
     # -- GIBO Line 2: Set theta1 and theta2 (next_query_point) and empty dataset D = {} --
     Arm.D = {"thetas": [], "h": []}
-    expected_grad_ang_dist = torch.tensor([-1.0, 0.0])  # analytic default before GP warms up
+    # expected_grad_ang_dist = torch.tensor([-1.0, 0.0])  # analytic default before GP warms up
     next_query_point = torch.tensor([Arm.theta.tolist()])  # initial query at arm's joint state
 
     # -- GIBO Line 3: for t = 0, ..., N do --
     while sim.is_running():
 
         # -- GIBO Line 4: Sample Noisy Objective Function | J(θ_t) + ε_t --
-        # posterior = GP_model(torch.tensor([X_gp_noisy.x, X_gp_noisy.y], dtype=torch.float32).reshape(1,2))     
-        # h_mean = posterior.mean             # SDF estimate
-        # h_variance  = posterior.variance
         h_noisy = Arm.observe_J(theta=Arm.theta)  # noisy J — added to GP dataset
 
         # -- GIBO Line 5: Extend Dataset D --
@@ -80,20 +79,23 @@ def main():
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
         # -- GIBO Step 7: For m = 1,2, ... M:
-        query_space = Arm.return_gridspace(wander_angle_deg=np.rad2deg(0.3*a/b))
+        query_space = Arm.return_gridspace(wander_angle_deg=np.rad2deg(0.4*a/b))
 
         # -- Step 8: Get query point = argmax(acq_function)  
         for m in range(Arm.M_number_of_queries):
-            
-            next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
-                                                    GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
-                                                    sigma2=sigma2, l=l, obs_noise=obs_noise, 
-                                                    next_query_point=next_query_point, query_space=query_space, m=m)
-            # next_query_point, query_covariance_gain = Arm.random_acq_function(train_x=train_x, train_y=train_y, 
+            # -- GIBO --
+            # next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
             #                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
             #                                         sigma2=sigma2, l=l, obs_noise=obs_noise, 
             #                                         next_query_point=next_query_point, query_space=query_space, m=m)
+            
+            # -- Querying points randomly  (No GIBO) --
+            next_query_point, query_covariance_gain = Arm.random_acq_function(train_x=train_x, train_y=train_y, 
+                                                    GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
+                                                    sigma2=sigma2, l=l, obs_noise=obs_noise, 
+                                                    next_query_point=next_query_point, query_space=query_space, m=m)
             print(f"QP Covariance Gain: {query_covariance_gain}")
+            
             # -- Step 9: Sample Noisy Objective Function J(query_point) + noise
             angular_dist_qp = Arm.observe_J(theta=next_query_point.squeeze().numpy())
 
@@ -110,14 +112,13 @@ def main():
             grad_K = Arm.compute_grad_K(train_x, GP_model, lengthscale=l)
             expected_grad_ang_dist = torch.sum(weights * grad_K, dim=0).detach()
 
-        # -- Step 12: End Inner For Loop  (Also add safety margin to reading )--
+        # -- Step 12: End Inner For Loop  (Also add safety margin to reading) --
         GP_model.set_train_data(inputs=train_x, targets=train_y, strict=False)
-        x_curr = torch.tensor([[Arm.theta[0], Arm.theta[1]]])                                                                                                                           
-        with torch.no_grad():                                                                                                                                                           
-            pred  = GP_model(x_curr)                                                                                                                                                    
-            h_mean = pred.mean.item()                                                                                                                                                   
-            h_std  = pred.variance.sqrt().item()                                                                                                                                      
-        n_sigma = 0.0                                                                                                                                                                   
+        x_curr = torch.tensor([[Arm.theta[0], Arm.theta[1]]]) # Evaluate
+        with torch.no_grad():
+            pred   = GP_model(x_curr)
+            h_mean = pred.mean.item()
+            h_std  = pred.variance.sqrt().item()
         h_safe = h_mean - n_sigma * h_std
 
         # -- Step 13:  Solves CBF-QP X_{t+1} = X_t + η·E[∇J | X=X_t] --
@@ -128,15 +129,17 @@ def main():
         # ----------------------------------------------------------
         # -- End of Algorithm. Repeat and plot. --
         # ----------------------------------------------------------
+        
         sim.log_data_manipulator(
             theta=Arm.theta, tau=Arm.u_final, h=h_noisy,
             t=sim.curr_time, query_points=next_query_point,
             grad=expected_grad_ang_dist.tolist(),
+            h_mean=h_mean, h_std=h_std,
         )
         sim.step(print_t=True)
     end_time = time.perf_counter()
-    print(f"Total Runtime (s): {(start_time - end_time):.4f}")
-    sim.plot_manipulator(Arm)
+    print(f"Total Runtime (s): {(end_time - start_time):.4f}")
+    sim.plot_relevant(Arm, n_sigma)
 
 if __name__ == "__main__":
     main()
