@@ -83,7 +83,7 @@ class Manipulator:
 
     def u_nom(self, t: float) -> np.ndarray:
         """
-        Torque Control following reference: 
+        Torque Control following reference:
          - M(r̈ − Kd·ė − Kp·e) + C·θ̇
          - https://arxiv.org/pdf/2503.10953
          """
@@ -155,7 +155,7 @@ class Manipulator:
         Criterion: tr( ∇K(qp, X)ᵀ (K_XX + σ²I)⁻¹ ∇K(qp, X) )
         """
         K_xx       = GP_model.covar_module(train_x, train_x).evaluate().detach()
-        K_xx_noisy = K_xx + GP_likelihood.noise.detach() * torch.eye(len(train_x))
+        K_xx_noisy = K_xx + GP_likelihood.noise.detach() * torch.eye(len(train_x)) # Grows by +2 rows, +2 columns each iteration
         K_inv      = torch.inverse(K_xx_noisy)
 
         best_val = -float("inf")
@@ -170,10 +170,20 @@ class Manipulator:
                 next_qp  = qp
         return next_qp, best_val
 
+    def random_acq_function(self, train_x, train_y, GP_model, GP_likelihood,
+                             sigma2, l, obs_noise, next_query_point, query_space, m):
+        """
+        Used to benchmark performance:
+         - randomly selects query points in the gridspace vs acquisition function
+        """
+
+        next_qp  = query_space[np.random.randint(0,query_space.shape[0])]
+        return next_qp,  0.0
+
     # -- HOCBF-QP --
     def solve_hocbf_qp(self, tau_nom: np.ndarray, h: float,
                    grad_h: torch.Tensor) -> np.ndarray:
-    
+
         M_mat = self.inertia_matrix(self.theta[1])
         C_vec = self.coriolis_vector(self.theta[1], self.dtheta)  # (2,) vector C(θ,θ̇)·θ̇
         Minv  = np.linalg.inv(M_mat)

@@ -20,7 +20,10 @@ class Simulation():
             "u": [],
             "dist": [],
             "times": [],
-            "query_points": []
+            "query_points": [],
+            "grad": [],
+            "h_mean": [],
+            "h_std": [],
         }
     def is_running(self):
         return self.curr_time < self.end_time
@@ -83,13 +86,67 @@ class Simulation():
 
 
 
-    def log_data_manipulator(self, theta, tau, h, t, query_points, grad):
+    def log_data_manipulator(self, theta, tau, h, t, query_points, grad,
+                             h_mean=None, h_std=None):
         self.logs["state"].append(theta.tolist())
         self.logs["u"].append(tau.tolist())
         self.logs["dist"].append(float(h))
         self.logs["times"].append(t)
         self.logs["query_points"].append(query_points.flatten().tolist())
-        self.logs.setdefault("grad", []).append(grad)
+        self.logs["grad"].append(grad)
+        if h_mean is not None:
+            self.logs["h_mean"].append(float(h_mean))
+        if h_std is not None:
+            self.logs["h_std"].append(float(h_std))
+
+    def plot_relevant(self, arm, n_sigma):
+        t_arr    = np.array(self.logs["times"])
+        th_arr   = np.array(self.logs["state"])
+        h_mean_arr = np.array(self.logs["h_mean"]) if self.logs["h_mean"] else None
+        h_std_arr  = np.array(self.logs["h_std"])  if self.logs["h_std"]  else None
+        grad_arr   = np.array(self.logs["grad"])   if self.logs["grad"]   else None
+        h_true_arr = np.degrees(np.array(self.logs["dist"]))  # true noisy h in degrees
+
+        ref = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
+
+        fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+        fig.suptitle(
+            f"GIBO + HOCBF — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
+            fontweight="bold",
+        )
+        BLUE, RED, GREEN = "#2563EB", "#DC2626", "#16A34A"
+
+        # -- (a) θ₁ tracking --
+        ax = axes[0, 0]
+        ax.plot(t_arr, np.degrees(ref[:, 0]), "--", color="gray", lw=1.2, label="reference")
+        ax.plot(t_arr, np.degrees(th_arr[:, 0]), color=BLUE, lw=1.5, label="GIBO+HOCBF")
+        ax.axhline(150, color=RED, ls="--", lw=1.2, label="θ_max")
+        ax.set_ylabel("θ₁ (deg)")
+        ax.set_title("Joint 1 angle")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+        # -- (b) θ₂ tracking --
+        ax = axes[0, 1]
+        ax.plot(t_arr, np.degrees(ref[:, 1]), "--", color="gray", lw=1.2, label="reference")
+        ax.plot(t_arr, np.degrees(th_arr[:, 1]), color=RED, lw=1.5, label="GIBO+HOCBF")
+        ax.set_ylabel("θ2 (deg)")
+        ax.set_title("Joint 2 angle")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+        # -- (c) GP posterior mean ± n_sigma·std vs true h --
+        ax = axes[1, 0]
+        ax.plot(t_arr, h_std_arr, color="gray", lw=1.0, alpha=0.6, label="sqrt of posterior variance")
+        ax.set_ylabel("Posterior Variance Over time")
+        ax.set_xlabel("Time (s)")
+        ax.set_title("Posterior Variance over time")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+        print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
+
+        plt.tight_layout()
+        plt.show()
 
     def plot_manipulator(self, arm):
         t_arr    = np.array(self.logs["times"])
@@ -167,7 +224,7 @@ class Simulation():
             ax.axhline(-1.0, color=BLUE, ls=":", lw=1.0)
             ax.axhline( 0.0, color=RED,  ls=":", lw=1.0)
         ax.set_ylabel("gradient estimate")
-        ax.set_title("GP gradient $\\mathbb{E}[\\nabla J]$ vs analytic $[-1,\\ 0]$")
+        ax.set_title("GP gradient E[J] vs analytic $[-1,\\ 0]$")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
 
