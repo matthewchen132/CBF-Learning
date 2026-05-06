@@ -167,7 +167,7 @@ class Simulation():
             ax.axhline(-1.0, color=BLUE, ls=":", lw=1.0)
             ax.axhline( 0.0, color=RED,  ls=":", lw=1.0)
         ax.set_ylabel("gradient estimate")
-        ax.set_title("GP gradient $\\mathbb{E}[\\nabla J]$ vs analytic $[-1,\\ 0]$")
+        ax.set_title("GP gradient E[J] vs analytic $[-1,\\ 0]$")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
 

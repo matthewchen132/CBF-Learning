@@ -1,4 +1,5 @@
 import torch
+import time
 torch.set_default_dtype(torch.float64)
 
 import gpytorch as gp
@@ -25,12 +26,13 @@ QP safeguarding controller.
 '''
 
 def main():
+    start_time = time.perf_counter()
     # i. Initialize Sim
-    sim = Simulation(dt=0.1, end_time=3.0)
+    sim = Simulation(dt=0.025, end_time=21)
+    # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
-    # a. stepsize η ()
-    step_size = 0.1
+    # a. stepsize η (Not applicable, step forward using numerical integration)
 
     # b. hyperpriors for GP hyperparameters 
     RBF_gaussian_likelihood = gp.likelihoods.GaussianLikelihood()
@@ -69,7 +71,7 @@ def main():
         train_x = torch.tensor(Arm.D["thetas"])
         train_y = torch.tensor(Arm.D["h"])
 
-        # -- GIBO Line 6 (SKIPPED for Safety) : Construct Training Data for GIBO / GP --
+        # -- GIBO Line 6 (Retraining Skipped for Safety) : Construct Training Data for GIBO / GP --
         GP_model.set_train_data(inputs=train_x, 
                                 targets=train_y,
                                 strict=False)
@@ -77,16 +79,21 @@ def main():
         l = GP_model.covar_module.base_kernel.lengthscale.detach().squeeze(0)
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
-        # -- GIBO Step 7: For m = 1,2, ... M, -> 2nd Loop is baked into "SE_acq_func_grad_covariance"
+        # -- GIBO Step 7: For m = 1,2, ... M:
         query_space = Arm.return_gridspace(wander_angle_deg=np.rad2deg(0.3*a/b))
 
         # -- Step 8: Get query point = argmax(acq_function)  
         for m in range(Arm.M_number_of_queries):
+            
             next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
                                                     GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
                                                     sigma2=sigma2, l=l, obs_noise=obs_noise, 
                                                     next_query_point=next_query_point, query_space=query_space, m=m)
-
+            # next_query_point, query_covariance_gain = Arm.random_acq_function(train_x=train_x, train_y=train_y, 
+            #                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
+            #                                         sigma2=sigma2, l=l, obs_noise=obs_noise, 
+            #                                         next_query_point=next_query_point, query_space=query_space, m=m)
+            print(f"QP Covariance Gain: {query_covariance_gain}")
             # -- Step 9: Sample Noisy Objective Function J(query_point) + noise
             angular_dist_qp = Arm.observe_J(theta=next_query_point.squeeze().numpy())
 
@@ -127,6 +134,8 @@ def main():
             grad=expected_grad_ang_dist.tolist(),
         )
         sim.step(print_t=True)
+    end_time = time.perf_counter()
+    print(f"Total Runtime (s): {(start_time - end_time):.4f}")
     sim.plot_manipulator(Arm)
 
 if __name__ == "__main__":

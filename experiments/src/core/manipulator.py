@@ -4,6 +4,7 @@ import torch
 import gpytorch as gp
 
 
+
 class Noise:
     def __init__(self, rng, noise_std_dev):
         self.rng = rng
@@ -155,7 +156,7 @@ class Manipulator:
         Criterion: tr( ∇K(qp, X)ᵀ (K_XX + σ²I)⁻¹ ∇K(qp, X) )
         """
         K_xx       = GP_model.covar_module(train_x, train_x).evaluate().detach()
-        K_xx_noisy = K_xx + GP_likelihood.noise.detach() * torch.eye(len(train_x))
+        K_xx_noisy = K_xx + GP_likelihood.noise.detach() * torch.eye(len(train_x)) # Grows by +2 rows, +2 columns each iteration
         K_inv      = torch.inverse(K_xx_noisy)
 
         best_val = -float("inf")
@@ -169,6 +170,16 @@ class Manipulator:
                 best_val = tr_val
                 next_qp  = qp
         return next_qp, best_val
+    
+    def random_acq_function(self, train_x, train_y, GP_model, GP_likelihood,
+                             sigma2, l, obs_noise, next_query_point, query_space, m):
+        """
+        Used to benchmark performance:
+         - randomly selects query points in the gridspace vs acquisition function
+        """
+
+        next_qp  = query_space[np.random.randint(0,query_space.shape[0])]
+        return next_qp,  0.0
 
     # -- HOCBF-QP --
     def solve_hocbf_qp(self, tau_nom: np.ndarray, h: float,
