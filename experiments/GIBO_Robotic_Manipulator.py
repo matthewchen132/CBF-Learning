@@ -27,9 +27,10 @@ QP safeguarding controller.
 
 def main():
     start_time = time.perf_counter()
-
+    print("1 for GIBO | 2 for random sample | 3 for adjusted")
+    algo = input()
     # i. Initialize Sim
-    sim = Simulation(dt=0.025, end_time=20)
+    sim = Simulation(dt=0.04, end_time=11)
     # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
@@ -79,21 +80,25 @@ def main():
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
         # -- GIBO Step 7: For m = 1,2, ... M:
-        query_space = Arm.return_gridspace(wander_angle_deg=np.rad2deg(0.4*a/b))
-
+        query_space = Arm.return_gridspace(wander_angle_deg=np.rad2deg(.55*a/b))
         # -- Step 8: Get query point = argmax(acq_function)  
         for m in range(Arm.M_number_of_queries):
-            # -- GIBO --
-            # next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
-            #                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
-            #                                         sigma2=sigma2, l=l, obs_noise=obs_noise, 
-            #                                         next_query_point=next_query_point, query_space=query_space, m=m)
+            # -- GIBO (Original) --
+
+            if algo == "1":
+                next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
+                                                        GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
+                                                        sigma2=sigma2, l=l, obs_noise=obs_noise, 
+                                                        next_query_point=next_query_point, query_space=query_space, m=m)
             
-            # -- Querying points randomly  (No GIBO) --
-            next_query_point, query_covariance_gain = Arm.random_acq_function(train_x=train_x, train_y=train_y, 
-                                                    GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
-                                                    sigma2=sigma2, l=l, obs_noise=obs_noise, 
-                                                    next_query_point=next_query_point, query_space=query_space, m=m)
+            # -- Querying points randomly (No GIBO) --
+            elif algo == "2":
+                next_query_point, query_covariance_gain = Arm.random_acq_function(train_x=train_x, train_y=train_y, 
+                                                        GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
+                                                        sigma2=sigma2, l=l, obs_noise=obs_noise, 
+                                                        next_query_point=next_query_point, query_space=query_space, m=m)
+            
+
             print(f"QP Covariance Gain: {query_covariance_gain}")
             
             # -- Step 9: Sample Noisy Objective Function J(query_point) + noise
@@ -139,7 +144,10 @@ def main():
         sim.step(print_t=True)
     end_time = time.perf_counter()
     print(f"Total Runtime (s): {(end_time - start_time):.4f}")
-    sim.plot_relevant(Arm, n_sigma)
+    if algo == "1":
+        sim.plot_acq_function(Arm, n_sigma=n_sigma)
+    if algo == "2":
+        sim.plot_random(Arm, n_sigma=n_sigma)
 
 if __name__ == "__main__":
     main()

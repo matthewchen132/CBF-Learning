@@ -151,24 +151,60 @@ class Manipulator:
     def acquisition_function(self, train_x, train_y, GP_model, GP_likelihood,
                              sigma2, l, obs_noise, next_query_point, query_space, m):
         """
-        Select the query point in M that maximises information gain about ∇J.
-        Criterion: tr( ∇K(qp, X)ᵀ (K_XX + σ²I)⁻¹ ∇K(qp, X) )
+        Select the query point that maximises expected decrease in Jacobian variance at θ_t.
+        Criterion: Tr( ∇K(θ_t, X̂)ᵀ · (K(X̂,X̂) + σ²I)⁻¹ · ∇K(θ_t, X̂) )
+        where X̂ = [train_x, qp] — the extended dataset including the candidate.
         """
+        x_curr  = train_x.new_tensor([[self.theta[0], self.theta[1]]])  # (1, 2) — fixed
+
+        best_val = -float("inf")
+        next_qp  = query_space[0]
+        for qp in query_space:
+            # Extended dataset X̂ = [train_x, qp]
+            X_hat   = torch.cat([train_x, qp.unsqueeze(0)], dim=0)          # (n+1, 2)
+            n_hat   = X_hat.shape[0]
+
+            # K(X̂, X̂) + σ²I
+            K_hat       = GP_model.covar_module(X_hat, X_hat).evaluate().detach()
+            K_hat_noisy = K_hat + GP_likelihood.noise.detach() * torch.eye(n_hat)
+
+            # ∇_{θ_t} K(θ_t, X̂)  — shape (n+1, 2)
+            diffs      = x_curr - X_hat                                      # (n+1, 2)
+            K_curr_hat = GP_model.covar_module(x_curr, X_hat).evaluate().detach().T  # (n+1, 1)
+            grad_K_hat = -(1 / l**2) * diffs * K_curr_hat                   # (n+1, 2)
+
+            # Tr( ∇K^T · K̂⁻¹ · ∇K ) via solve (more stable than explicit inverse)
+            K_hat_inv_grad = torch.linalg.solve(K_hat_noisy, grad_K_hat)    # (n+1, 2)
+            tr_val = torch.trace(grad_K_hat.T @ K_hat_inv_grad)             # scalar
+
+            if tr_val > best_val:
+                best_val = tr_val
+                next_qp  = qp
+        return next_qp, float(best_val)
+    
+    def modified_acq_function(self, train_x, train_y, GP_model, GP_likelihood,
+                             sigma2, l, obs_noise, next_query_point, query_space, m):
+        """
+        Select a query point in M that maximises information gain about ∇J(θ_t).
+        Criterion: tr( ∇_θ K(θ_t, X)ᵀ (K_XX + σ²I)⁻¹ ∇_θ K(θ_t, X) )
+        θ_t is fixed for the entire inner loop — gradient is always w.r.t. current arm state.
+        """
+        x_curr     = train_x.new_tensor([[self.theta[0], self.theta[1]]])  # θ_t — fixed
         K_xx       = GP_model.covar_module(train_x, train_x).evaluate().detach()
-        K_xx_noisy = K_xx + GP_likelihood.noise.detach() * torch.eye(len(train_x)) # Grows by +2 rows, +2 columns each iteration
+        K_xx_noisy = K_xx + GP_likelihood.noise.detach() * torch.eye(len(train_x))
         K_inv      = torch.inverse(K_xx_noisy)
 
         best_val = -float("inf")
         next_qp  = query_space[0]
         for qp in query_space:
-            dist   = qp - train_x                                                          # (N, 2)
-            K_qp_x = GP_model.covar_module(qp.unsqueeze(0), train_x).evaluate().detach()  # (1, N)
-            grad_K = -(1 / l**2) * (K_qp_x.T * dist)                                     # (N, 2)
-            tr_val = torch.trace(grad_K.T @ K_inv @ grad_K)
+            dist   = x_curr - qp.unsqueeze(0)                                                 # (1, 2) — θ_t − qp
+            K_curr_qp = GP_model.covar_module(x_curr, qp.unsqueeze(0)).evaluate().detach()    # (1, 1)
+            grad_k    = -(1 / l**2) * dist * K_curr_qp                                        # (1, 2) — ∇_θ k(θ_t, qp)
+            tr_val    = (grad_k @ grad_k.T).squeeze()                                         # ||∇_θ k(θ_t, qp)||²
             if tr_val > best_val:
                 best_val = tr_val
                 next_qp  = qp
-        return next_qp, best_val
+        return next_qp, float(best_val)
 
     def random_acq_function(self, train_x, train_y, GP_model, GP_likelihood,
                              sigma2, l, obs_noise, next_query_point, query_space, m):
