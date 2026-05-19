@@ -163,7 +163,7 @@ class GIBO_control():
         best_acq_value = -float("inf")
         next_qp = query_space[0]  # safe default
         for qp in query_space:
-            dist = qp - train_x
+            dist = train_x - qp.unsqueeze(0)
             K_qp_x = GP_model.covar_module(qp.unsqueeze(0), train_x).evaluate().detach()
             grad_K_x_qp = -(1/l**2) * (K_qp_x.T * dist)
 

@@ -98,133 +98,193 @@ class Simulation():
             self.logs["h_mean"].append(float(h_mean))
         if h_std is not None:
             self.logs["h_std"].append(float(h_std))
-
-    def plot_relevant(self, arm, n_sigma):
-        t_arr    = np.array(self.logs["times"])
-        th_arr   = np.array(self.logs["state"])
-        h_mean_arr = np.array(self.logs["h_mean"]) if self.logs["h_mean"] else None
-        h_std_arr  = np.array(self.logs["h_std"])  if self.logs["h_std"]  else None
-        grad_arr   = np.array(self.logs["grad"])   if self.logs["grad"]   else None
-        h_true_arr = np.degrees(np.array(self.logs["dist"]))  # true noisy h in degrees
+    def plot_acq_function(self, arm, n_sigma=2.0):
+        t_arr     = np.array(self.logs["times"])
+        th_arr    = np.array(self.logs["state"])
+        qp_arr    = np.array(self.logs["query_points"])
+        h_std_arr = np.array(self.logs["h_std"]) if self.logs["h_std"] else None
 
         ref = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
 
-        fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         fig.suptitle(
             f"GIBO + HOCBF — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
             fontweight="bold",
         )
-        BLUE, RED, GREEN = "#2563EB", "#DC2626", "#16A34A"
+        BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
 
-        # -- (a) θ₁ tracking --
-        ax = axes[0, 0]
+        # ── (a) θ₁ tracking ──────────────────────────────────────────────────
+        ax = axes[0]
+        th1_deg = np.degrees(th_arr[:, 0])
         ax.plot(t_arr, np.degrees(ref[:, 0]), "--", color="gray", lw=1.2, label="reference")
-        ax.plot(t_arr, np.degrees(th_arr[:, 0]), color=BLUE, lw=1.5, label="GIBO+HOCBF")
-        ax.axhline(150, color=RED, ls="--", lw=1.2, label="θ_max")
+        ax.plot(t_arr, th1_deg, color=BLUE, lw=1.5, label="GIBO+HOCBF")
+        if h_std_arr is not None:
+            half_band = np.degrees(h_std_arr) * n_sigma
+            ax.fill_between(t_arr, th1_deg - half_band, th1_deg + half_band,
+                            color=BLUE, alpha=0.15, label=f"±{n_sigma}σ GP")
+        ax.scatter(t_arr, np.degrees(qp_arr[:, 0]),
+                   s=10, color=ORANGE, alpha=0.6, zorder=4, label="query pts")
+        ax.axhline(150, color=RED, ls="--", lw=1.2, label="theta_max")
+        ax.set_xlabel("Time (s)")
         ax.set_ylabel("θ₁ (deg)")
         ax.set_title("Joint 1 angle")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
 
-        # -- (b) θ₂ tracking --
-        ax = axes[0, 1]
-        ax.plot(t_arr, np.degrees(ref[:, 1]), "--", color="gray", lw=1.2, label="reference")
-        ax.plot(t_arr, np.degrees(th_arr[:, 1]), color=RED, lw=1.5, label="GIBO+HOCBF")
-        ax.set_ylabel("θ2 (deg)")
-        ax.set_title("Joint 2 angle")
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
-
-        # -- (c) GP posterior mean ± n_sigma·std vs true h --
-        ax = axes[1, 0]
-        ax.plot(t_arr, h_std_arr, color="gray", lw=1.0, alpha=0.6, label="sqrt of posterior variance")
-        ax.set_ylabel("Posterior Variance Over time")
+        # ── (b) Posterior covariance over time ───────────────────────────────
+        ax = axes[1]
+        if h_std_arr is not None:
+            ax.plot(t_arr, h_std_arr, color=BLUE, lw=1.5, label="posterior std (√variance)")
+            ax.fill_between(t_arr, 0, h_std_arr, color=BLUE, alpha=0.15)
+            print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
         ax.set_xlabel("Time (s)")
-        ax.set_title("Posterior Variance over time")
+        ax.set_ylabel("Posterior Covariance")
+        ax.set_title("Posterior Covariance over time")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
-        print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
 
         plt.tight_layout()
         plt.show()
 
-    def plot_manipulator(self, arm):
-        t_arr    = np.array(self.logs["times"])
-        th_arr   = np.array(self.logs["state"])         # (N, 2) — [θ₁, θ₂]
-        tau_arr  = np.array(self.logs["u"])             # (N, 2) — [τ₁, τ₂]
-        h_arr    = np.array(self.logs["dist"])          # (N,)   — true h
-        qp_arr   = np.array(self.logs["query_points"])  # (N, 2) — query points in joint space
-        grad_arr = np.array(self.logs.get("grad", []))  # (N, 2) — GP gradient estimate
+    def plot_random(self, arm, n_sigma=2.0):
+        t_arr     = np.array(self.logs["times"])
+        th_arr    = np.array(self.logs["state"])
+        qp_arr    = np.array(self.logs["query_points"])
+        h_std_arr = np.array(self.logs["h_std"]) if self.logs["h_std"] else None
 
         ref = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
 
-        fig, axes = plt.subplots(3, 2, figsize=(12, 10))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         fig.suptitle(
-            f"GIBO + HOCBF — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
+            f"Random Querying — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
             fontweight="bold",
         )
-        BLUE, RED = "#2563EB", "#DC2626"
+        BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
 
         # ── (a) θ₁ tracking ──────────────────────────────────────────────────
-        ax = axes[0, 0]
-        ax.plot(t_arr, np.degrees(ref[:, 0]),  "--", color="gray", lw=1.2, label="reference")
-        ax.plot(t_arr, np.degrees(th_arr[:, 0]), color=BLUE, lw=1.5, label="GIBO+HOCBF")
+        ax = axes[0]
+        th1_deg = np.degrees(th_arr[:, 0])
+        ax.plot(t_arr, np.degrees(ref[:, 0]), "--", color="gray", lw=1.2, label="reference")
+        ax.plot(t_arr, th1_deg, color=BLUE, lw=1.5, label="GIBO+HOCBF")
+        if h_std_arr is not None:
+            half_band = np.degrees(h_std_arr) * n_sigma
+            ax.fill_between(t_arr, th1_deg - half_band, th1_deg + half_band,
+                            color=BLUE, alpha=0.15, label=f"±{n_sigma}σ GP")
+        ax.scatter(t_arr, np.degrees(qp_arr[:, 0]),
+                   s=10, color=ORANGE, alpha=0.6, zorder=4, label="query pts")
         ax.axhline(150, color=RED, ls="--", lw=1.2, label="theta_max")
+        ax.set_xlabel("Time (s)")
         ax.set_ylabel("θ₁ (deg)")
         ax.set_title("Joint 1 angle")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
 
-        # ── (b) θ₂ tracking ──────────────────────────────────────────────────
-        ax = axes[0, 1]
-        ax.plot(t_arr, np.degrees(ref[:, 1]),  "--", color="gray", lw=1.2, label="reference")
-        ax.plot(t_arr, np.degrees(th_arr[:, 1]), color=RED, lw=1.5, label="GIBO+HOCBF")
-        ax.set_ylabel("θ₂ (deg)")
-        ax.set_title("Joint 2 angle")
+        # ── (b) Posterior covariance over time ───────────────────────────────
+        ax = axes[1]
+        if h_std_arr is not None:
+            ax.plot(t_arr, h_std_arr, color=BLUE, lw=1.5, label="posterior std (√variance)")
+            ax.fill_between(t_arr, 0, h_std_arr, color=BLUE, alpha=0.15)
+            print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Posterior Covariance")
+        ax.set_title("Posterior Covariance over time")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
 
-        # ── (c) Safety function h ─────────────────────────────────────────────
-        ax = axes[1, 0]
-        ax.plot(t_arr, np.degrees(h_arr), color=BLUE, lw=1.5)
-        ax.axhline(0, color=RED, ls="--", lw=1.2, label="h = 0 (boundary)")
-        ax.set_ylabel("h = θ_max − θ₁ (deg)")
-        ax.set_title("Safety function h(t)")
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.show()
 
-        # ── (d) Control torques ───────────────────────────────────────────────
-        ax = axes[1, 1]
-        ax.plot(t_arr, tau_arr[:, 0], color=BLUE, lw=1.5, label="τ₁")
-        ax.plot(t_arr, tau_arr[:, 1], color=RED,  lw=1.5, label="τ₂")
-        ax.set_ylabel("Torque (N·m)")
-        ax.set_title("Control inputs τ")
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
+    def plot_composite(self, arm, n_sigma=2.0):
+        t_arr     = np.array(self.logs["times"])
+        th_arr    = np.array(self.logs["state"])
+        qp_arr    = np.array(self.logs["query_points"])
+        h_std_arr = np.array(self.logs["h_std"]) if self.logs["h_std"] else None
 
-        # ── (e) GIBO query points in joint space ──────────────────────────────
-        ax = axes[2, 0]
-        sc = ax.scatter(
-            np.degrees(qp_arr[:, 0]), np.degrees(qp_arr[:, 1]),
-            c=t_arr, cmap="viridis", s=8, alpha=0.7,
+        ref = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        fig.suptitle(
+            f"Composite Acq. Function — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
+            fontweight="bold",
         )
-        ax.axvline(150, color=RED, ls="--", lw=1.2, label="$\\theta_{max}$")
-        ax.set_xlabel("θ₁ (deg)")
-        ax.set_ylabel("θ₂ (deg)")
-        ax.set_title("GIBO query points (joint space)")
+        BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
+
+        # ── (a) θ₁ tracking ──────────────────────────────────────────────────
+        ax = axes[0]
+        th1_deg = np.degrees(th_arr[:, 0])
+        ax.plot(t_arr, np.degrees(ref[:, 0]), "--", color="gray", lw=1.2, label="reference")
+        ax.plot(t_arr, th1_deg, color=BLUE, lw=1.5, label="GIBO+HOCBF")
+        if h_std_arr is not None:
+            half_band = np.degrees(h_std_arr) * n_sigma
+            ax.fill_between(t_arr, th1_deg - half_band, th1_deg + half_band,
+                            color=BLUE, alpha=0.15, label=f"±{n_sigma}σ GP")
+        ax.scatter(t_arr, np.degrees(qp_arr[:, 0]),
+                   s=10, color=ORANGE, alpha=0.6, zorder=4, label="query pts")
+        ax.axhline(150, color=RED, ls="--", lw=1.2, label="theta_max")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("θ₁ (deg)")
+        ax.set_title("Joint 1 angle")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
-        plt.colorbar(sc, ax=ax, label="time (s)")
 
-        # ── (f) GP gradient estimate vs analytic ──────────────────────────────
-        ax = axes[2, 1]
-        if len(grad_arr):
-            ax.plot(t_arr, grad_arr[:, 0], color=BLUE, lw=1.5, label="∂J/∂θ₁  (→ −1)")
-            ax.plot(t_arr, grad_arr[:, 1], color=RED,  lw=1.5, label="∂J/∂θ₂  (→  0)")
-            ax.axhline(-1.0, color=BLUE, ls=":", lw=1.0)
-            ax.axhline( 0.0, color=RED,  ls=":", lw=1.0)
-        ax.set_ylabel("gradient estimate")
-        ax.set_title("GP gradient E[J] vs analytic $[-1,\\ 0]$")
+        # ── (b) Posterior covariance over time ───────────────────────────────
+        ax = axes[1]
+        if h_std_arr is not None:
+            ax.plot(t_arr, h_std_arr, color=BLUE, lw=1.5, label="posterior std (√variance)")
+            ax.fill_between(t_arr, 0, h_std_arr, color=BLUE, alpha=0.15)
+            print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Posterior Covariance")
+        ax.set_title("Posterior Covariance over time")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+
+    def plot_manipulator(self, arm, n_sigma=2.0):
+        t_arr     = np.array(self.logs["times"])
+        th_arr    = np.array(self.logs["state"])
+        qp_arr    = np.array(self.logs["query_points"])
+        h_std_arr = np.array(self.logs["h_std"]) if self.logs["h_std"] else None
+
+        ref = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        fig.suptitle(
+            f"GIBO + HOCBF — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
+            fontweight="bold",
+        )
+        BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
+
+        # ── (a) θ₁ tracking ──────────────────────────────────────────────────
+        ax = axes[0]
+        th1_deg = np.degrees(th_arr[:, 0])
+        ax.plot(t_arr, np.degrees(ref[:, 0]), "--", color="gray", lw=1.2, label="reference")
+        ax.plot(t_arr, th1_deg, color=BLUE, lw=1.5, label="GIBO+HOCBF")
+        if h_std_arr is not None:
+            half_band = np.degrees(h_std_arr) * n_sigma
+            ax.fill_between(t_arr, th1_deg - half_band, th1_deg + half_band,
+                            color=BLUE, alpha=0.15, label=f"±{n_sigma}σ GP")
+        ax.scatter(t_arr, np.degrees(qp_arr[:, 0]),
+                   s=10, color=ORANGE, alpha=0.6, zorder=4, label="query pts")
+        ax.axhline(150, color=RED, ls="--", lw=1.2, label="theta_max")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("θ₁ (deg)")
+        ax.set_title("Joint 1 angle")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+        # ── (b) Posterior covariance over time ───────────────────────────────
+        ax = axes[1]
+        if h_std_arr is not None:
+            ax.plot(t_arr, h_std_arr, color=BLUE, lw=1.5, label="posterior std (√variance)")
+            ax.fill_between(t_arr, 0, h_std_arr, color=BLUE, alpha=0.15)
+            print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Posterior Covariance")
+        ax.set_title("Posterior Covariance over time")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
 
