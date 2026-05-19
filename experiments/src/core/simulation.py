@@ -194,6 +194,55 @@ class Simulation():
         plt.tight_layout()
         plt.show()
 
+    def plot_composite(self, arm, n_sigma=2.0):
+        t_arr     = np.array(self.logs["times"])
+        th_arr    = np.array(self.logs["state"])
+        qp_arr    = np.array(self.logs["query_points"])
+        h_std_arr = np.array(self.logs["h_std"]) if self.logs["h_std"] else None
+
+        ref = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        fig.suptitle(
+            f"Composite Acq. Function — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
+            fontweight="bold",
+        )
+        BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
+
+        # ── (a) θ₁ tracking ──────────────────────────────────────────────────
+        ax = axes[0]
+        th1_deg = np.degrees(th_arr[:, 0])
+        ax.plot(t_arr, np.degrees(ref[:, 0]), "--", color="gray", lw=1.2, label="reference")
+        ax.plot(t_arr, th1_deg, color=BLUE, lw=1.5, label="GIBO+HOCBF")
+        if h_std_arr is not None:
+            half_band = np.degrees(h_std_arr) * n_sigma
+            ax.fill_between(t_arr, th1_deg - half_band, th1_deg + half_band,
+                            color=BLUE, alpha=0.15, label=f"±{n_sigma}σ GP")
+        ax.scatter(t_arr, np.degrees(qp_arr[:, 0]),
+                   s=10, color=ORANGE, alpha=0.6, zorder=4, label="query pts")
+        ax.axhline(150, color=RED, ls="--", lw=1.2, label="theta_max")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("θ₁ (deg)")
+        ax.set_title("Joint 1 angle")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+        # ── (b) Posterior covariance over time ───────────────────────────────
+        ax = axes[1]
+        if h_std_arr is not None:
+            ax.plot(t_arr, h_std_arr, color=BLUE, lw=1.5, label="posterior std (√variance)")
+            ax.fill_between(t_arr, 0, h_std_arr, color=BLUE, alpha=0.15)
+            print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Posterior Covariance")
+        ax.set_title("Posterior Covariance over time")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+
     def plot_manipulator(self, arm, n_sigma=2.0):
         t_arr     = np.array(self.logs["times"])
         th_arr    = np.array(self.logs["state"])
