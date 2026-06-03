@@ -24,6 +24,7 @@ class Simulation():
             "grad": [],
             "h_mean": [],
             "h_std": [],
+            "lambda": [],
         }
     def is_running(self):
         return self.curr_time < self.end_time
@@ -87,7 +88,7 @@ class Simulation():
 
 
     def log_data_manipulator(self, theta, tau, h, t, query_points, grad,
-                             h_mean=None, h_std=None):
+                             h_mean=None, h_std=None, lambda_val=None):
         self.logs["state"].append(theta.tolist())
         self.logs["u"].append(tau.tolist())
         self.logs["dist"].append(float(h))
@@ -98,6 +99,8 @@ class Simulation():
             self.logs["h_mean"].append(float(h_mean))
         if h_std is not None:
             self.logs["h_std"].append(float(h_std))
+        if lambda_val is not None:
+            self.logs["lambda"].append(float(lambda_val))
     def plot_acq_function(self, arm, n_sigma=2.0):
         t_arr     = np.array(self.logs["times"])
         th_arr    = np.array(self.logs["state"])
@@ -108,7 +111,7 @@ class Simulation():
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         fig.suptitle(
-            f"GIBO + HOCBF — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
+            f"GIBO + HOCBF — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries},  $\\lambda = 1.0$)",
             fontweight="bold",
         )
         BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
@@ -156,7 +159,7 @@ class Simulation():
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         fig.suptitle(
-            f"Random Querying — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
+            f"Random Querying — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries},  $\\lambda = 0.0$)",
             fontweight="bold",
         )
         BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
@@ -200,12 +203,17 @@ class Simulation():
         qp_arr    = np.array(self.logs["query_points"])
         h_std_arr = np.array(self.logs["h_std"]) if self.logs["h_std"] else None
 
-        ref = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
+        ref     = np.array([arm.reference(t)[0] for t in t_arr])  # (N, 2)
+        lam_arr = np.array(self.logs["lambda"]) if self.logs["lambda"] else None
+
+        lam_str = (f"$\\lambda$ adaptive: mean={lam_arr.mean():.2f}, "
+                   f"range=[{lam_arr.min():.2f}, {lam_arr.max():.2f}]"
+                   if lam_arr is not None else "$\\lambda$ = N/A")
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         fig.suptitle(
-            f"Composite Acq. Function — 2-DOF Planar Arm   ($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries})",
-            fontweight="bold",
+            f"Adaptive $\\lambda$ Acq. Function — 2-DOF Planar Arm   "
+            f"($\\theta_1 \\leq 150°$,  M={arm.M_number_of_queries},  {lam_str})",
         )
         BLUE, RED, ORANGE = "#2563EB", "#DC2626", "#F59E0B"
 
@@ -227,18 +235,19 @@ class Simulation():
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
 
-        # ── (b) Posterior covariance over time ───────────────────────────────
+        # ── (b) Posterior covariance + λ(x) over time ────────────────────────
         ax = axes[1]
         if h_std_arr is not None:
             ax.plot(t_arr, h_std_arr, color=BLUE, lw=1.5, label="posterior std (√variance)")
             ax.fill_between(t_arr, 0, h_std_arr, color=BLUE, alpha=0.15)
             print(f"Sum of Posterior Covariance: {np.sum(h_std_arr)}")
         ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Posterior Covariance")
-        ax.set_title("Posterior Covariance over time")
-        ax.legend(fontsize=8)
+        ax.set_ylabel("Posterior Covariance", color=BLUE)
+        ax.set_title("Posterior Covariance & λ(x) over time")
+        ax.tick_params(axis='y', labelcolor=BLUE)
         ax.grid(alpha=0.3)
 
+        ax.legend(fontsize=8, loc="upper left")
         plt.tight_layout()
         plt.show()
 
