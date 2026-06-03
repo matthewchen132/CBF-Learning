@@ -34,21 +34,41 @@ class Manipulator:
 
     # -- Safety / HOCBF constants --
     THETA_MAX = np.radians(150.0)
-    CBF_GAMMA = 5.0   # rate for ψ = ḣ + γh
-    CBF_ALPHA = 5.0   # rate for ψ̇ + αψ ≥ 0
+    CBF_GAMMA = 5.0   # rate for ψ = ḣ + γh ; FIX AT 5 for consistent results
+    CBF_ALPHA = 5.0   # rate for ψ̇ + αψ ≥ 0 ; FIX AT 5 for consistent results
 
     # -- Tracking controller gains --
     KP = 100.0
     KD = 20.0
 
-    def __init__(self, alpha_cbf: float, M_number_of_queries: int, dt: float):
+    def __init__(self, alpha_cbf: float, M_number_of_queries: int, dt: float,
+                 class_k: str = "linear"):
         self.alpha_cbf = alpha_cbf
         self.M_number_of_queries = M_number_of_queries
         self.dt = dt
         self.D = {"thetas": [], "h": []}
-
         self.rng = np.random.default_rng(seed=2)
         self.Noise = Noise(self.rng, noise_std_dev=0.05)
+
+        # Class K function α₁(h) and its derivative α₁'(h) for the HOCBF
+        g = self.CBF_GAMMA
+        if class_k == "linear":
+            self.alpha1      = lambda h: g * h
+            self.alpha1_grad = lambda h: g
+        elif class_k == "sqrt":
+            self.alpha1      = lambda h: g * np.sqrt(max(h, 1e-6))
+            self.alpha1_grad = lambda h: g / (2 * np.sqrt(max(h, 1e-6)))
+        elif class_k == "cubic":
+            self.alpha1      = lambda h: g * h**3
+            self.alpha1_grad = lambda h: 3 * g * h**2
+        elif class_k == "quadratic":
+            self.alpha1      = lambda h: g * h **2
+            self.alpha1_grad = lambda h: 2 * g * h
+        elif class_k == "tanh":
+            self.alpha1      = lambda h: np.tanh(h)
+            self.alpha1_grad = lambda h: 1 - np.tanh(h) ** 2
+        else:
+            raise ValueError(f"Unknown class_k '{class_k}'. Choose: linear, sqrt, cubic, quadratic, tanh")
 
         # Start near reference at t = 0
         r0, dr0, _ = self.reference(0.0)
@@ -181,15 +201,26 @@ class Manipulator:
                 next_qp  = qp
         return next_qp, float(best_val)
     
-    def composite_acq_function(self, train_x, GP_model, GP_likelihood,
-                             sigma2, l, obs_noise, query_space):
+    def compute_lambda(self, full_norm=True) -> float:
         """
-        Selects a point to sample based on (1) + (2):
-        (1) Maximum Gradient Variance "I" 
-        (2) Maximum sigma2_h
+        full_norm: True for consideration of theta1, theta2 / False for just theta1
+        lambda(x) = V_{∇h} / (V_{∇h} + V_h) 
+        V_{∇h} = ||dθdt|| — Our system's "speed" is the rate of change of theta
+        V_h    = alpha_cbf — sensitivity to CBF value error is constant (eq. 17: V_h = -α).
+        """
+        V_grad_h = np.linalg.norm(self.dtheta)
+        V_h      = self.alpha_cbf
+        return float(V_grad_h / (V_grad_h + V_h))
+
+    def composite_acq_function(self, train_x, GP_model, GP_likelihood, l, query_space):
+        """
+        Selects a query point via eq. (14):
+          x* = argmax (1-λ)·σ²_h(x)/σ²_max  +  λ·I_∇(x)/I_max
+        λ(x) adapts based on joint velocity: fast motion → prioritise gradient learning.
         """
         x_curr  = train_x.new_tensor([[self.theta[0], self.theta[1]]])  # (1, 2) — fixed
         n_train = train_x.shape[0]
+        lam     = self.compute_lambda()
 
         # Precompute K(train_x, train_x) + σ²I — shared across all candidates
         K_XX_noisy = (GP_model.covar_module(train_x, train_x).evaluate().detach()
@@ -197,7 +228,7 @@ class Manipulator:
 
         I_vals      = torch.zeros(query_space.shape[0])
         sigma2_vals = torch.zeros(query_space.shape[0])
-        C = 0.95
+
         for idx, qp in enumerate(query_space):
             qp_2d = qp.unsqueeze(0)  # (1, 2) — GPyTorch requires 2D inputs
 
@@ -210,27 +241,23 @@ class Manipulator:
             K_curr_hat  = GP_model.covar_module(x_curr, X_hat).evaluate().detach().T  # (n+1, 1)
             grad_K_hat  = -(1 / l**2) * diffs * K_curr_hat                  # (n+1, 2)
             K_hat_inv_grad = torch.linalg.solve(K_hat_noisy, grad_K_hat)    # (n+1, 2)
-            tr_val      = torch.trace(grad_K_hat.T @ K_hat_inv_grad)
-            I_vals[idx] = (1-C) * tr_val
+            I_vals[idx] = torch.trace(grad_K_hat.T @ K_hat_inv_grad)
 
             # -- (2) Posterior variance at qp: σ²(qp|train_x) --
-            k_qq   = GP_model.covar_module(qp_2d, qp_2d).evaluate().detach().squeeze()  # scalar
+            k_qq   = GP_model.covar_module(qp_2d, qp_2d).evaluate().detach().squeeze()
             k_qX   = GP_model.covar_module(qp_2d, train_x).evaluate().detach()          # (1, n)
             alpha  = torch.linalg.solve(K_XX_noisy, k_qX.T)                             # (n, 1)
-            sigma2_qp        = (k_qq - (k_qX @ alpha).squeeze()).clamp(min=0.0)
-            sigma2_vals[idx] = C * sigma2_qp
+            sigma2_vals[idx] = (k_qq - (k_qX @ alpha).squeeze()).clamp(min=0.0)
 
-        # -- Normalise each term then sum --
-        max_I      = (1-C) *I_vals.max().clamp(min=1e-12)
-        max_sigma2 = C * sigma2_vals.max().clamp(min=1e-12)
-        acq_vals   = I_vals / max_I + sigma2_vals / max_sigma2
+        # -- Normalise then combine with adaptive λ (eq. 14) --
+        max_I      = I_vals.max().clamp(min=1e-12)
+        max_sigma2 = sigma2_vals.max().clamp(min=1e-12)
+        acq_vals   = (1 - lam) * (sigma2_vals / max_sigma2) + lam * (I_vals / max_I)
         best_idx   = acq_vals.argmax()
         next_qp    = query_space[best_idx]
+        return next_qp, lam
 
-        return next_qp, float(sigma2_vals[best_idx])
-
-    def random_acq_function(self, train_x, train_y, GP_model, GP_likelihood,
-                             sigma2, l, obs_noise, next_query_point, query_space, m):
+    def random_acq_function(self, query_space):
         """
         Used to benchmark performance:
          - randomly selects query points in the gridspace vs acquisition function
@@ -255,13 +282,13 @@ class Manipulator:
             g = g / g_norm          # normalize — only direction enters the constraint
 
         # ψ = g·θ̇ + γ·h
-        psi = float(g @ self.dtheta) + self.CBF_GAMMA * h
+        psi = (g @ self.dtheta) + self.alpha1(h)
 
         # A·τ ≥ b  from  ψ̇ + α·ψ ≥ 0
         A_row = g @ Minv                                    # (2,)
         b_rhs = (float(g @ (Minv @ C_vec))                 # g·M⁻¹·C(θ,θ̇)θ̇
-                - (self.CBF_GAMMA + self.CBF_ALPHA) * float(g @ self.dtheta)
-                - self.CBF_ALPHA * self.CBF_GAMMA * h)
+                - (self.alpha1_grad(h) + self.CBF_ALPHA) * float(g @ self.dtheta)
+                - self.CBF_ALPHA * self.alpha1(h))
 
         # Sanity checks
         assert np.isfinite(b_rhs), f"b_rhs blew up: {b_rhs:.3e} | psi={psi:.3e} | dtheta={self.dtheta}"

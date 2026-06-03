@@ -27,10 +27,11 @@ QP safeguarding controller.
 
 def main():
     start_time = time.perf_counter()
-    print("1 for GIBO | 2 for random sample | 3 for adjusted")
+    print("1 for GIBO | 2 for random sample | 3 for lambda weighted acquisition")
     algo = input()
     # i. Initialize Sim
-    sim = Simulation(dt=0.04, end_time=11)
+    # sim = Simulation(dt=0.02, end_time=11.0)
+    sim = Simulation(dt=0.04, end_time=11.0)
     # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
@@ -51,7 +52,8 @@ def main():
     
     # d. number of samples for gradient estimate -> M =
     M_samples = 1
-    Arm = Manipulator(alpha_cbf=.5, M_number_of_queries=M_samples, dt=N)
+    class_k = input("Choose a class_k function(linear, sqrt, cubic, quadratic, tanh)")
+    Arm = Manipulator(alpha_cbf=.5, M_number_of_queries=M_samples, dt=N, class_k=class_k)
     n_sigma = 2.0
 
     # -- GIBO Line 2: Set theta1 and theta2 (next_query_point) and empty dataset D = {} --
@@ -84,8 +86,10 @@ def main():
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
         # -- GIBO Step 7: For m = 1,2, ... M:
-        query_space = Arm.return_gridspace(wander_angle_deg=np.rad2deg(.55*a/b))
+        query_space = Arm.return_gridspace(wander_angle_deg=2*np.rad2deg(.55*a/b))
+        # query_space = Arm.return_gridspace(wander_angle_deg=2 * np.rad2deg(.55*a/b)) <-- Baseline wander range
         # -- Step 8: Get query point = argmax(acq_function)  
+        
         for m in range(Arm.M_number_of_queries):
             # -- GIBO (Original) --
 
@@ -94,19 +98,20 @@ def main():
                                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
                                                         sigma2=sigma2, l=l, obs_noise=obs_noise, 
                                                         next_query_point=next_query_point, query_space=query_space, m=m)
+                print(f"QP Covariance Gain: {query_covariance_gain}")
+
             elif algo == "2":
-                next_query_point, query_covariance_gain = Arm.random_acq_function(train_x=train_x, train_y=train_y, 
-                                                        GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
-                                                        sigma2=sigma2, l=l, obs_noise=obs_noise, 
-                                                        next_query_point=next_query_point, query_space=query_space, m=m)
+                next_query_point, query_covariance_gain = Arm.random_acq_function(query_space=query_space)
+                print(f"QP Covariance Gain: {query_covariance_gain}")
+
             elif algo == "3":
-                next_query_point, query_covariance_gain = Arm.composite_acq_function(train_x, GP_model, RBF_gaussian_likelihood,
-                                                        sigma2, l, obs_noise, query_space)  
+                next_query_point, query_covariance_gain = Arm.composite_acq_function(
+                    train_x, GP_model, RBF_gaussian_likelihood, l, query_space)
+                print(f"Lambda Value: {query_covariance_gain}")
+
             else:
                 raise Exception("Invalid Index for acquisition function.")
-            
-            print(f"QP Covariance Gain: {query_covariance_gain}")
-            
+                        
             # -- Step 9: Sample Noisy Objective Function J(query_point) + noise
             angular_dist_qp = Arm.observe_J(theta=next_query_point.squeeze().numpy())
 
@@ -117,8 +122,6 @@ def main():
             train_y = torch.tensor(Arm.D["h"], dtype=torch.float64)
 
             # -- Step 11: Update the posterior of ∇θJ <-> (∇ Signed Distance)
-            # E[∇J]= ∑​ w_i * ∇K(x,x) <- Expected value of gradient is the sum of weighted gradient_K_xx\
-            
             weights = Arm.compute_gradient_update_weights(train_x, train_y, GP_model, GP_model.likelihood).unsqueeze(-1) # (3,1)
             grad_K = Arm.compute_grad_K(train_x, GP_model, lengthscale=l)
             expected_grad_ang_dist = torch.sum(weights * grad_K, dim=0).detach()
@@ -151,6 +154,7 @@ def main():
             t=sim.curr_time, query_points=next_query_point,
             grad=expected_grad_ang_dist.tolist(),
             h_mean=h_mean, h_std=h_std,
+            lambda_val=query_covariance_gain if algo == "3" else None,
         )
         sim.step(print_t=True)
     end_time = time.perf_counter()

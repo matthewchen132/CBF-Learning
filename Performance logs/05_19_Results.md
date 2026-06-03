@@ -12,11 +12,7 @@ outputscale_prior = GammaPrior(2.0, .17) # (a,b) : outputscale = a/b
  - Min h value (deg): 6.022
  - Sum of Posterior Covariance: 68.25805007848507
 
--- Random QP (Baseline) --
- - Total Runtime (s): 3.0582
- - CBF Violations:    3
- - Min h value (deg): -2.820
- - Sum of Posterior Covariance: 73.14073541976286
+
 
 -- Composite (Lambda = 0.2) --
  - Total Runtime (s): 59.6986
@@ -30,8 +26,29 @@ outputscale_prior = GammaPrior(2.0, .17) # (a,b) : outputscale = a/b
  - Min h value (deg): 10.538
  - Sum of Posterior Covariance: 67.90198212181937
 
+-- Random QP (Baseline) --
+ - Total Runtime (s): 3.0582
+ - CBF Violations:    3
+ - Min h value (deg): -2.820
+ - Sum of Posterior Covariance: 73.14073541976286
+
 -- Composite (Lambda = 0.95) --
  - Total Runtime (s): 107.4989
  - CBF Violations:    0
  - Min h value (deg): 6.693
  - Sum of Posterior Covariance: 68.16441918244723
+
+-- Adaptive Lambda Function-- 
+ - Total Runtime (s): 73.1554
+ - CBF Violations:    0
+ - Min h value (deg): 9.154
+ - Sum of Posterior Covariance: 66.68580784568525
+
+05/19-26 Goals
+[] implement the lambda function from paper
+[] change class K function in CBF -> azra
+[] track if we can get closer min h value than prior. Maybe build a data pipeline
+
+ performance criteria -> monte carlo with different noise
+
+NOTE: V_grad_h norm of state uses both theta1 and theta2. 
