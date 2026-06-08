@@ -10,27 +10,12 @@ from src.helpers.gp_simple import RBF_example
 from src.core.simulation import Simulation
 from src.core.manipulator import Manipulator
 
-'''
-GIBO Algorithm Implementation
-[ ] Robotic manipulator, implement dynamics and GIBO
-[ ] CBF based on angle limit:  r = pisin(t), pi/2 sin(4t)
-
-Notes on Paper
- - 2nd order System Dynamics
- - Construct a control-invariant subset of the full state space which contains
-    all positions allowed by the original positional constraints.
-3) derive a condition which, if satisfied, proves that our constructed set is 
-safe for general second-order systems and provide an associated 
-
-QP safeguarding controller.
-'''
-
 def main():
     start_time = time.perf_counter()
-    print("1 for GIBO | 2 for random sample | 3 for lambda weighted acquisition")
-    algo = input()
+    algo = input("1 for GIBO | 2 for random sample | 3 for lambda weighted acquisition")
+    optim_type = input("QP or SOCP?" )
+
     # i. Initialize Sim
-    # sim = Simulation(dt=0.02, end_time=11.0)
     sim = Simulation(dt=0.04, end_time=11.0)
     # NOTE: dt must be sufficiently small to not explode
 
@@ -52,12 +37,12 @@ def main():
     
     # d. number of samples for gradient estimate -> M =
     M_samples = 1
-    class_k = input("Choose a class_k function(linear, sqrt, cubic, quadratic, tanh)")
-    Arm = Manipulator(alpha_cbf=.5, M_number_of_queries=M_samples, dt=N, class_k=class_k)
+    Arm = Manipulator(alpha_cbf=.5, M_number_of_queries=M_samples, dt=N, class_k="linear")
     n_sigma = 2.0
 
     # -- GIBO Line 2: Set theta1 and theta2 (next_query_point) and empty dataset D = {} --
     Arm.D = {"thetas": [], "h": []}
+
     # expected_grad_ang_dist = torch.tensor([-1.0, 0.0])  # analytic default before GP warms up
     next_query_point = torch.tensor([Arm.theta.tolist()])  # initial query at arm's joint state
 
@@ -87,23 +72,19 @@ def main():
 
         # -- GIBO Step 7: For m = 1,2, ... M:
         query_space = Arm.return_gridspace(wander_angle_deg=2*np.rad2deg(.55*a/b))
-        # query_space = Arm.return_gridspace(wander_angle_deg=2 * np.rad2deg(.55*a/b)) <-- Baseline wander range
         # -- Step 8: Get query point = argmax(acq_function)  
         
         for m in range(Arm.M_number_of_queries):
             # -- GIBO (Original) --
-
             if algo == "1":
                 next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
                                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
                                                         sigma2=sigma2, l=l, obs_noise=obs_noise, 
                                                         next_query_point=next_query_point, query_space=query_space, m=m)
                 print(f"QP Covariance Gain: {query_covariance_gain}")
-
             elif algo == "2":
                 next_query_point, query_covariance_gain = Arm.random_acq_function(query_space=query_space)
                 print(f"QP Covariance Gain: {query_covariance_gain}")
-
             elif algo == "3":
                 next_query_point, query_covariance_gain = Arm.composite_acq_function(
                     train_x, GP_model, RBF_gaussian_likelihood, l, query_space)
@@ -137,7 +118,14 @@ def main():
 
         # -- Step 13:  Solves CBF-QP X_{t+1} = X_t + η·E[∇J | X=X_t] --
         torque_nom = Arm.u_nom(sim.curr_time)
-        Arm.u_final = Arm.solve_hocbf_qp(tau_nom=torque_nom, h=h_safe, grad_h=expected_grad_ang_dist)
+
+        if optim_type == "QP":
+            Arm.u_final = Arm.solve_hocbf_qp(torque_nom=torque_nom, h=h_safe, grad_h=expected_grad_ang_dist)
+        elif optim_type == "SOCP":
+            e_grad_h = Arm.compute_grad_h_uncertainty(train_x, GP_model, RBF_gaussian_likelihood, l)
+            Arm.u_final = Arm.solve_hocbf_SOCP(torque_nom=torque_nom, h=h_mean, e_h=h_safe, grad_h=expected_grad_ang_dist, e_grad_h=e_grad_h)
+        else:
+            raise Exception("Invalid optimization type.")
         Arm.rk4_step(Arm.u_final)  # updates self.theta, self.dtheta
         h_true = Arm.THETA_MAX - Arm.theta[0]
         if h_true < 0:

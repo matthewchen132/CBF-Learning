@@ -23,3 +23,6 @@ Total Runtime (s): 59.3069
 CBF Violations:    0
 Min h value (deg): 7.999
 Sum of Posterior Covariance: 63.927929535566506
+
+Fix priors/ noise etc.
+ - Implement SOCP
