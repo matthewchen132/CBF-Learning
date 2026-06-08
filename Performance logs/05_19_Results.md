@@ -44,11 +44,8 @@ outputscale_prior = GammaPrior(2.0, .17) # (a,b) : outputscale = a/b
  - Min h value (deg): 9.154
  - Sum of Posterior Covariance: 66.68580784568525
 
-05/19-26 Goals
-[] implement the lambda function from paper
-[] change class K function in CBF -> azra
-[] track if we can get closer min h value than prior. Maybe build a data pipeline
-
- performance criteria -> monte carlo with different noise
-
-NOTE: V_grad_h norm of state uses both theta1 and theta2. 
+-- SOCP -- 
+Total Runtime (s): 64.5590
+CBF Violations:    0
+Min h value (deg): 6.370
+Sum of Posterior Covariance: 70.01258699664356

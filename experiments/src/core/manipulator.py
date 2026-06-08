@@ -168,6 +168,21 @@ class Manipulator:
         K_xx_noisy = K_xx + jitter * torch.eye(len(train_x))
         return torch.linalg.solve(K_xx_noisy, train_y)
 
+    def compute_grad_h_uncertainty(self, train_x: torch.Tensor, GP_model,
+                                   likelihood, lengthscale: torch.Tensor) -> float:
+        """Posterior std of ∇h at current θ: sqrt(tr(Σ_∇)) where
+           Σ_∇ = (1/l²)·I  −  grad_K.T · K_XX_noisy⁻¹ · grad_K  (2×2)."""
+        l = lengthscale
+        grad_K  = self.compute_grad_K(train_x, GP_model, l)          # (N, 2)
+        K_xx    = GP_model.covar_module(train_x, train_x).evaluate()
+        noise  = max(float(likelihood.noise.detach()), 1e-2)
+        K_xx_noisy = K_xx + noise * torch.eye(len(train_x))
+        K_inv_gradK = torch.linalg.solve(K_xx_noisy, grad_K)         # (N, 2)
+        posterior_cov_grad  = (1.0 / l**2) * torch.eye(2, dtype=train_x.dtype) \
+                      - grad_K.T @ K_inv_gradK                        # (2, 2)
+        posterior_cov_grad  = posterior_cov_grad.clamp(min=0.0)
+        return float(posterior_cov_grad.trace().sqrt())
+
     def acquisition_function(self, train_x, train_y, GP_model, GP_likelihood,
                              sigma2, l, obs_noise, next_query_point, query_space, m):
         """
@@ -267,7 +282,7 @@ class Manipulator:
         return next_qp,  0.0
 
     # -- HOCBF-QP --
-    def solve_hocbf_qp(self, tau_nom: np.ndarray, h: float,
+    def solve_hocbf_qp(self, torque_nom: np.ndarray, h: float,
                    grad_h: torch.Tensor) -> np.ndarray:
 
         M_mat = self.inertia_matrix(self.theta[1])
@@ -281,10 +296,10 @@ class Manipulator:
         else:
             g = g / g_norm          # normalize — only direction enters the constraint
 
-        # ψ = g·θ̇ + γ·h
+        # ψ = g·θ̇ + α·h
         psi = (g @ self.dtheta) + self.alpha1(h)
 
-        # A·τ ≥ b  from  ψ̇ + α·ψ ≥ 0
+        # g·Minv·τ ≥ b  from  ψ̇ + α·ψ ≥ 0
         A_row = g @ Minv                                    # (2,)
         b_rhs = (float(g @ (Minv @ C_vec))                 # g·M⁻¹·C(θ,θ̇)θ̇
                 - (self.alpha1_grad(h) + self.CBF_ALPHA) * float(g @ self.dtheta)
@@ -295,9 +310,73 @@ class Manipulator:
         assert np.isfinite(A_row).all(), f"A_row invalid: {A_row}"
 
         # Closed-form projection — no OSQP needed for single constraint
-        if A_row @ tau_nom >= b_rhs:
-            return tau_nom                                  # already safe
+        if A_row @ torque_nom >= b_rhs:
+            return torque_nom                                  # already safe
 
-        # Project tau_nom onto constraint boundary A·τ = b
-        tau_safe = tau_nom + ((b_rhs - A_row @ tau_nom) / (A_row @ A_row)) * A_row
+        # Project torque_nom onto constraint boundary A·τ = b
+        tau_safe = torque_nom + ((b_rhs - A_row @ torque_nom) / (A_row @ A_row)) * A_row
         return tau_safe
+    
+    # -- HOCBF-SOCP --
+    def solve_hocbf_SOCP(self, torque_nom: np.ndarray, 
+                        h: float,
+                        grad_h: torch.Tensor,
+                        e_h: torch.Tensor,
+                        e_grad_h: torch.Tensor) -> np.ndarray:
+
+        # -- SOCP Higher Order CBF --
+        '''
+        Our state h(x) is not able to map to our control input (Non-holonomic). 
+        Therefore, we need to form a HOCBF with:
+        ψ = ḣ , ψ̇ = dḣ/dt
+
+        -- Conceptually: -- 
+            (1) ψ = grad_h_unit · θ̇ + alpha_K·h
+            (2) ψ̇ ≥ -α·ψ
+        '''
+        M_mat = self.inertia_matrix(self.theta[1])
+        C_vec = self.coriolis_vector(self.theta[1], self.dtheta)  # (2,) vector C(θ,θ̇)·θ̇
+        Minv  = np.linalg.inv(M_mat)
+        g     = grad_h.numpy()
+
+        g_norm = np.linalg.norm(g)
+        if g_norm < 1e-6:
+            grad_h_unit = np.array([-1.0, 0.0])
+        else:
+            grad_h_unit = g / g_norm          # Unit vector in direction of gradient
+
+        e_grad_h_norm = np.linalg.norm(e_grad_h)
+        if e_grad_h_norm < 1e-6:
+            e_grad_h = np.array([0.0, 0.0])
+        else:
+            e_grad_h = e_grad_h / e_grad_h_norm
+
+        psi = (grad_h_unit @ self.dtheta) + self.alpha1(e_h) # h_dot = psi
+        tau = cp.Variable(2)
+
+        f_x = - Minv @ C_vec # <-- Dynamics (correlated w/ Drift)
+        g_x = Minv # <-- Dynamics (correlated w/ Control)
+
+        # -- || A·τ + b || <= c·τ + d --
+        # e_∇h · ||Minv·τ − Minv·C||  ≤  (μ_g @ Minv)·τ  −  b_rhs
+        A_cone = e_grad_h * g_x      # (2,2)
+        b_cone = e_grad_h * f_x        # (2,1)
+        c_linear = g_x @ grad_h_unit   # (2,1)
+        # -- d = μ_∇h^T · f(x)  +  α·[μ_h(x) -  e_h(x)] --
+        d_linear = float(grad_h_unit @ f_x) + self.alpha1_grad(h) * float(grad_h_unit @ self.dtheta) + self.CBF_ALPHA * (psi)
+
+        # Sanity checks
+        assert np.isfinite(f_x).all(), f"f_x blew up: {f_x} | psi={psi:.3e} | dtheta={self.dtheta}"
+        assert np.isfinite(g_x).all(), f"g_x invalid: {g_x}"
+
+        # -- Optimize || A·τ + b || <= c·τ+d --
+        slack = cp.Variable(nonneg=True)
+        constraint = [cp.norm(A_cone @ tau + b_cone) <= c_linear @ tau + d_linear + slack] 
+        objective = cp.Minimize(cp.sum_squares(tau - torque_nom) + 1e6 * cp.square(slack)) # min || u - u* ||^2
+        prob = cp.Problem(objective=objective, constraints=constraint)
+        prob.solve()
+
+        if prob.status not in ["optimal", "optimal_inaccurate"] or tau.value is None:
+            raise Exception(f"problem is not optimally solved, {prob.status}")
+        print(f"Slack: {slack.value}, psi: {psi}")
+        return tau.value
