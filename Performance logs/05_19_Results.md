@@ -49,3 +49,10 @@ Total Runtime (s): 64.5590
 CBF Violations:    0
 Min h value (deg): 6.370
 Sum of Posterior Covariance: 70.01258699664356
+
+Slack: 1.9943484273057694e-08, psi: 27.494607664750625
+Current Time: 30.039999999999537
+Total Runtime (s): 1020.7203
+CBF Violations:    0
+Min h value (deg): 10.973
+Sum of Posterior Covariance: 124.37956752529021

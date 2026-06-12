@@ -197,7 +197,7 @@ class Simulation():
         plt.tight_layout()
         plt.show()
 
-    def plot_composite(self, arm, n_sigma=2.0):
+    def plot_composite(self, arm, class_k_str, n_sigma=2.0):
         t_arr     = np.array(self.logs["times"])
         th_arr    = np.array(self.logs["state"])
         qp_arr    = np.array(self.logs["query_points"])
@@ -207,7 +207,7 @@ class Simulation():
         lam_arr = np.array(self.logs["lambda"]) if self.logs["lambda"] else None
 
         lam_str = (f"$\\lambda$ adaptive: mean={lam_arr.mean():.2f}, "
-                   f"range=[{lam_arr.min():.2f}, {lam_arr.max():.2f}]"
+                   f"range=[{lam_arr.min():.2f}, {lam_arr.max():.2f}] | Class K (CBF): {class_k_str}"
                    if lam_arr is not None else "$\\lambda$ = N/A")
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))

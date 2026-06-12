@@ -16,7 +16,7 @@ def main():
     optim_type = input("QP or SOCP?" )
 
     # i. Initialize Sim
-    sim = Simulation(dt=0.04, end_time=11.0)
+    sim = Simulation(dt=0.04, end_time=30.0)
     # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
@@ -154,7 +154,7 @@ def main():
     elif algo == "2":
         sim.plot_random(Arm, n_sigma=n_sigma)
     elif algo == "3":
-        sim.plot_composite(Arm, n_sigma=n_sigma)
+        sim.plot_composite(Arm, class_k_str=Arm.class_K, n_sigma=n_sigma,)
     else:
         raise Exception("Invalid Index for acquisition function.")
 

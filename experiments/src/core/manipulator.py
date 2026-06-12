@@ -49,6 +49,7 @@ class Manipulator:
         self.D = {"thetas": [], "h": []}
         self.rng = np.random.default_rng(seed=2)
         self.Noise = Noise(self.rng, noise_std_dev=0.05)
+        self.class_K = class_k
 
         # Class K function α₁(h) and its derivative α₁'(h) for the HOCBF
         g = self.CBF_GAMMA
@@ -334,36 +335,25 @@ class Manipulator:
             (1) ψ = grad_h_unit · θ̇ + alpha_K·h
             (2) ψ̇ ≥ -α·ψ
         '''
-        M_mat = self.inertia_matrix(self.theta[1])
-        C_vec = self.coriolis_vector(self.theta[1], self.dtheta)  # (2,) vector C(θ,θ̇)·θ̇
-        Minv  = np.linalg.inv(M_mat)
-        g     = grad_h.numpy()
+        M_mat  = self.inertia_matrix(self.theta[1])
+        C_vec  = self.coriolis_vector(self.theta[1], self.dtheta)  # (2,) vector C(θ,θ̇)·θ̇
+        Minv   = np.linalg.inv(M_mat)
+        grad_h = grad_h.numpy()
 
-        g_norm = np.linalg.norm(g)
-        if g_norm < 1e-6:
-            grad_h_unit = np.array([-1.0, 0.0])
-        else:
-            grad_h_unit = g / g_norm          # Unit vector in direction of gradient
-
-        e_grad_h_norm = np.linalg.norm(e_grad_h)
-        if e_grad_h_norm < 1e-6:
-            e_grad_h = np.array([0.0, 0.0])
-        else:
-            e_grad_h = e_grad_h / e_grad_h_norm
-
-        psi = (grad_h_unit @ self.dtheta) + self.alpha1(e_h) # h_dot = psi
+        psi = (grad_h @ self.dtheta) + self.alpha1(e_h) # h_dot = psi
         tau = cp.Variable(2)
 
         f_x = - Minv @ C_vec # <-- Dynamics (correlated w/ Drift)
-        g_x = Minv # <-- Dynamics (correlated w/ Control)
+        g_x = Minv           # <-- Dynamics (correlated w/ Control)
 
         # -- || A·τ + b || <= c·τ + d --
         # e_∇h · ||Minv·τ − Minv·C||  ≤  (μ_g @ Minv)·τ  −  b_rhs
         A_cone = e_grad_h * g_x      # (2,2)
-        b_cone = e_grad_h * f_x        # (2,1)
-        c_linear = g_x @ grad_h_unit   # (2,1)
+        b_cone = e_grad_h * (f_x + self.alpha1_grad(h) * self.dtheta)        # (2,1)
+        c_linear = g_x @ grad_h   # (2,1)
+
         # -- d = μ_∇h^T · f(x)  +  α·[μ_h(x) -  e_h(x)] --
-        d_linear = float(grad_h_unit @ f_x) + self.alpha1_grad(h) * float(grad_h_unit @ self.dtheta) + self.CBF_ALPHA * (psi)
+        d_linear = float(grad_h @ f_x) + self.alpha1_grad(h) * float(grad_h @ self.dtheta) + self.CBF_ALPHA * (psi)
 
         # Sanity checks
         assert np.isfinite(f_x).all(), f"f_x blew up: {f_x} | psi={psi:.3e} | dtheta={self.dtheta}"
@@ -371,12 +361,14 @@ class Manipulator:
 
         # -- Optimize || A·τ + b || <= c·τ+d --
         slack = cp.Variable(nonneg=True)
-        constraint = [cp.norm(A_cone @ tau + b_cone) <= c_linear @ tau + d_linear + slack] 
+        constraint = [cp.norm(A_cone @ tau + b_cone) <= c_linear @ tau + d_linear + slack ] 
+        
         objective = cp.Minimize(cp.sum_squares(tau - torque_nom) + 1e6 * cp.square(slack)) # min || u - u* ||^2
         prob = cp.Problem(objective=objective, constraints=constraint)
         prob.solve()
+        print(f"{tau.value} \n")
 
         if prob.status not in ["optimal", "optimal_inaccurate"] or tau.value is None:
-            raise Exception(f"problem is not optimally solved, {prob.status}")
+            raise Exception(f"problem is not optimally solved, {tau.value}")
         print(f"Slack: {slack.value}, psi: {psi}")
         return tau.value
