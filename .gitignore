@@ -1,2 +1,4 @@
 .venv/
 Tasks/
+outputs/
+__pycache__/

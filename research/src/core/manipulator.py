@@ -48,7 +48,7 @@ class Manipulator:
         self.dt = dt
         self.D = {"thetas": [], "h": []}
         self.rng = np.random.default_rng(seed=2)
-        self.Noise = Noise(self.rng, noise_std_dev=0.05)
+        self.Noise = Noise(self.rng, noise_std_dev=0.1)
         self.class_K = class_k
 
         # Class K function α₁(h) and its derivative α₁'(h) for the HOCBF
@@ -174,15 +174,16 @@ class Manipulator:
         """Posterior std of ∇h at current θ: sqrt(tr(Σ_∇)) where
            Σ_∇ = (1/l²)·I  −  grad_K.T · K_XX_noisy⁻¹ · grad_K  (2×2)."""
         l = lengthscale
-        grad_K  = self.compute_grad_K(train_x, GP_model, l)          # (N, 2)
+        sigma2 = GP_model.covar_module.outputscale.detach()
+        grad_K  = self.compute_grad_K(train_x, GP_model, l)                # (N, 2)
         K_xx    = GP_model.covar_module(train_x, train_x).evaluate()
         noise  = max(float(likelihood.noise.detach()), 1e-2)
         K_xx_noisy = K_xx + noise * torch.eye(len(train_x))
-        K_inv_gradK = torch.linalg.solve(K_xx_noisy, grad_K)         # (N, 2)
-        posterior_cov_grad  = (1.0 / l**2) * torch.eye(2, dtype=train_x.dtype) \
-                      - grad_K.T @ K_inv_gradK                        # (2, 2)
-        posterior_cov_grad  = posterior_cov_grad.clamp(min=0.0)
-        return float(posterior_cov_grad.trace().sqrt())
+        K_inv_gradK = torch.linalg.solve(K_xx_noisy, grad_K)               # (N, 2)
+        posterior_cov_grad  = (sigma2 / l**2) * torch.eye(2, dtype=train_x.dtype) \
+                                - grad_K.T @ K_inv_gradK                   # (2, 2)
+        diag_post_cov_grad  = posterior_cov_grad.diagonal().clamp(min=0.0) # Clamps the diagonal variances to be >= 0
+        return float(diag_post_cov_grad.sum().sqrt())
 
     def acquisition_function(self, train_x, train_y, GP_model, GP_likelihood,
                              sigma2, l, obs_noise, next_query_point, query_space, m):
