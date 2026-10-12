@@ -13,10 +13,10 @@ from src.core.manipulator import Manipulator
 def main():
     start_time = time.perf_counter()
     algo = input("1 for GIBO | 2 for random sample | 3 for lambda weighted acquisition")
-    optim_type = input("QP or SOCP?" )
+    optim_type = input("QP or SOCP: " )
 
     # i. Initialize Sim
-    sim = Simulation(dt=0.04, end_time=30.0)
+    sim = Simulation(dt=0.04, end_time=15.0)
     # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
@@ -26,9 +26,13 @@ def main():
     RBF_gaussian_likelihood = gp.likelihoods.GaussianLikelihood()
     a = 0.2
     b = 1.0
-    lengthscale_prior = GammaPrior(a, b) # (a,b) : lengthscale = a/b
-    outputscale_prior = GammaPrior(2.0, .17) # (a,b) : outputscale = a/b
-    GP_model = RBF_example(train_x=[], train_y=[], likelihood=RBF_gaussian_likelihood, l_prior=lengthscale_prior, output_prior=outputscale_prior)
+
+    # -- Prior Initializations --
+    lengthscale_prior = GammaPrior(a, b)            # (a,b) : lengthscale = a/b
+    outputscale_prior = GammaPrior(2.0, .17)
+    GP_model = RBF_example(train_x=[], train_y=[], likelihood=RBF_gaussian_likelihood, # Instantiates a RBF-based gaussian process as surrogate model
+                                                   l_prior=lengthscale_prior, 
+                                                   output_prior=outputscale_prior)
     GP_model.eval()
     RBF_gaussian_likelihood.eval()
     
@@ -67,14 +71,13 @@ def main():
                                 targets=train_y,
                                 strict=False)
         sigma2 = GP_model.covar_module.outputscale.detach()
-        l = GP_model.covar_module.base_kernel.lengthscale.detach().squeeze(0)
+        l = GP_model.covar_module.base_kernel.lengthscale.detach().squeeze(0)   # Length-scale (defines local search space for acq function to select over)
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
         # -- GIBO Step 7: For m = 1,2, ... M:
-        query_space = Arm.return_gridspace(wander_angle_deg=2*np.rad2deg(.55*a/b))
-        # -- Step 8: Get query point = argmax(acq_function)  
-        
-        for m in range(Arm.M_number_of_queries):
+        query_space = Arm.return_gridspace(wander_angle_deg=2*np.rad2deg(float(l.max())))    # Defines the LOCAL Search Space for acquisition function (creates space to learn gradient)
+        # -- Step 8: Get query point = argmax(acq_function) --
+        for m in range(Arm.M_number_of_queries): # Creates
             # -- GIBO (Original) --
             if algo == "1":
                 next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
