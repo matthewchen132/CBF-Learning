@@ -86,15 +86,20 @@ def main():
         for m in range(Arm.M_number_of_queries): # Creates
             # -- GIBO (Original) --
             if algo == "1":
+                # -- Vanilla GIBO --
                 next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
                                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
                                                         sigma2=sigma2, l=l, obs_noise=obs_noise, 
                                                         next_query_point=next_query_point, query_space=query_space, m=m)
                 print(f"QP Covariance Gain: {query_covariance_gain}")
+
             elif algo == "2":
+                # -- Randomly selected acquisition function --
                 next_query_point, query_covariance_gain = Arm.random_acq_function(query_space=query_space)
                 print(f"QP Covariance Gain: {query_covariance_gain}")
+                
             elif algo == "3":
+                # -- Experimental Lambda-weighted GIBO --
                 next_query_point, query_covariance_gain = Arm.composite_acq_function(
                     train_x, GP_model, RBF_gaussian_likelihood, l, query_space)
                 print(f"Lambda Value: {query_covariance_gain}")
