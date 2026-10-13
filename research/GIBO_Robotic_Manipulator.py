@@ -9,16 +9,18 @@ import numpy as np
 from src.helpers.gp_simple import RBF_example
 from src.core.simulation import Simulation
 from src.core.manipulator import Manipulator
+from config import RunConfig
 
-def main():
+def main(cfg: RunConfig = None):
+    cfg = cfg or RunConfig()    # defaults reproduce the pre-config behavior
     start_time = time.perf_counter()
-    
+
     # -- Select Algorithm / Convex Opt. Problem --
-    algo = input("1 for GIBO | 2 for random sample | 3 for lambda weighted acquisition")
-    optim_type = input("QP or SOCP: " )
+    algo       = {"gibo": "1", "random": "2", "lambda": "3"}[cfg.algo]   # legacy branch keys; replaced in run(cfg) refactor
+    optim_type = cfg.optim_type                                        # "QP" | "SOCP"
 
     # i. Initialize Sim
-    sim = Simulation(dt=0.04, end_time=15.0)
+    sim = Simulation(dt=cfg.sim.dt, end_time=cfg.sim.end_time)
     # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
@@ -29,9 +31,9 @@ def main():
     N = sim.dt
     
     # c. number of samples for gradient estimate -> M =
-    M_samples = 1
-    Arm = Manipulator(alpha_cbf=.5, M_number_of_queries=M_samples, dt=N, class_k="linear")
-    n_sigma = 2.0
+    M_samples = cfg.gibo.M
+    Arm = Manipulator(alpha_cbf=cfg.cbf.alpha_cbf, M_number_of_queries=M_samples, dt=N, class_k=cfg.cbf.class_k)
+    n_sigma = cfg.gp.n_sigma
 
     # e. Fix GP Hyper-parameters based on Manipulator noise + rough estimate of lengthscale.
     #    NOTE: Fixed Hyperparameters to have (i) smaller lengthscale and ...
@@ -39,8 +41,8 @@ def main():
     GP_model = RBF_example(train_x=[], train_y=[],               # Empty Training set to start (no warm-start)
                            likelihood=RBF_gaussian_likelihood,   # Gaussian Probability Distribution
                            l_prior=None, output_prior=None)      # Set these values in step (f).
-    l_0     = 1.0       # Length-scale (Rough numbers)
-    S0      = 11.8      # Output-scale (Rough numbers)
+    l_0     = cfg.gp.l_0    # Length-scale ℓ — derivation in config.GPConfig
+    S0      = cfg.gp.S0     # Output-scale σ² — derivation in config.GPConfig
     NOISE_0 = Arm.Noise.noise_std_dev**2                        # Feeds the true noise distribution to our GP
 
     GP_model.covar_module.base_kernel.lengthscale = l_0         # Setup GP with our initial estimates of lengthscale / outputscale
@@ -81,7 +83,7 @@ def main():
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
         # -- GIBO Step 7: For m = 1,2, ... M:
-        query_space = Arm.return_gridspace(wander_angle_deg=2*np.rad2deg(float(l.max())))    # Defines the LOCAL Search Space for acquisition function (creates space to learn gradient)
+        query_space = Arm.return_gridspace(wander_angle_deg=cfg.gibo.box_factor*np.rad2deg(float(l.max())))    # Defines the LOCAL Search Space for acquisition function (creates space to learn gradient)
         # -- Step 8: Get query point = argmax(acq_function) --
         for m in range(Arm.M_number_of_queries): # Creates
             # -- GIBO (Original) --
@@ -97,7 +99,7 @@ def main():
                 # -- Randomly selected acquisition function --
                 next_query_point, query_covariance_gain = Arm.random_acq_function(query_space=query_space)
                 print(f"QP Covariance Gain: {query_covariance_gain}")
-                
+
             elif algo == "3":
                 # -- Experimental Lambda-weighted GIBO --
                 next_query_point, query_covariance_gain = Arm.composite_acq_function(
@@ -123,8 +125,8 @@ def main():
 
         # -- Step 12: End Inner For Loop  (Also add safety margin to reading) --
         GP_model.set_train_data(inputs=train_x, targets=train_y, strict=False)
-        x_curr = torch.tensor([[Arm.theta[0], Arm.theta[1]]]) # Evaluate
-        with torch.no_grad():
+        x_curr = torch.tensor([[Arm.theta[0], Arm.theta[1]]])           # Evaluate
+        with torch.no_grad(), gp.settings.max_cholesky_size(cfg.gp.max_cholesky_size):     
             pred   = GP_model(x_curr)
             h_mean = pred.mean.item()
             h_std  = pred.variance.sqrt().item()
