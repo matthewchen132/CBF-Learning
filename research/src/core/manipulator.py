@@ -37,6 +37,9 @@ class Manipulator:
     CBF_GAMMA = 5.0   # rate for ψ = ḣ + γh ; FIX AT 5 for consistent results
     CBF_ALPHA = 5.0   # rate for ψ̇ + αψ ≥ 0 ; FIX AT 5 for consistent results
 
+    # -- GP numerics --
+    GP_JITTER = 1e-6  # numerical jitter added on top of σₙ² (not a floor) — keeps solves stable
+
     # -- Tracking controller gains --
     KP = 100.0
     KD = 20.0
@@ -48,7 +51,7 @@ class Manipulator:
         self.dt = dt
         self.D = {"thetas": [], "h": []}
         self.rng = np.random.default_rng(seed=2)
-        self.Noise = Noise(self.rng, noise_std_dev=0.05)
+        self.Noise = Noise(self.rng, noise_std_dev=0.1)
         self.class_K = class_k
 
         # Class K function α₁(h) and its derivative α₁'(h) for the HOCBF
@@ -142,6 +145,11 @@ class Manipulator:
 
     # -- GIBO Helper Functions --
 
+    def K_XX_noisy(self, X: torch.Tensor, GP_model, likelihood) -> torch.Tensor:
+        """K(X,X) + (σₙ² + jitter)·I; shared by every GP computation."""
+        K = GP_model.covar_module(X, X).evaluate().detach()                          # (n, n) kernel: ℓ, σ²
+        return K + (float(likelihood.noise.detach()) + self.GP_JITTER) * torch.eye(len(X))  # (n, n) + sensor noise + jitter
+
     def return_gridspace(self, wander_angle_deg) -> torch.Tensor:
         """8×8 candidate query points centred on current (θ₁, θ₂)."""
         wander = np.deg2rad(wander_angle_deg)  # radians
@@ -162,11 +170,7 @@ class Manipulator:
 
     def compute_gradient_update_weights(self, train_x, train_y, GP_model, likelihood):
         """α = (K_XX + σ²I)⁻¹ y — weights for the posterior gradient E[∇J]."""
-        K_xx  = GP_model.covar_module(train_x, train_x).evaluate()
-        # Clamp noise floor to 1e-2: nearby query points make K_xx nearly rank-1;
-        # without this the solve amplifies noise into the gradient estimate.
-        jitter     = max(float(likelihood.noise.detach()), 1e-2)
-        K_xx_noisy = K_xx + jitter * torch.eye(len(train_x))
+        K_xx_noisy = self.K_XX_noisy(X=train_x, GP_model=GP_model, likelihood=likelihood)
         return torch.linalg.solve(K_xx_noisy, train_y)
 
     def compute_grad_h_uncertainty(self, train_x: torch.Tensor, GP_model,
@@ -174,15 +178,14 @@ class Manipulator:
         """Posterior std of ∇h at current θ: sqrt(tr(Σ_∇)) where
            Σ_∇ = (1/l²)·I  −  grad_K.T · K_XX_noisy⁻¹ · grad_K  (2×2)."""
         l = lengthscale
-        grad_K  = self.compute_grad_K(train_x, GP_model, l)          # (N, 2)
-        K_xx    = GP_model.covar_module(train_x, train_x).evaluate()
-        noise  = max(float(likelihood.noise.detach()), 1e-2)
-        K_xx_noisy = K_xx + noise * torch.eye(len(train_x))
-        K_inv_gradK = torch.linalg.solve(K_xx_noisy, grad_K)         # (N, 2)
-        posterior_cov_grad  = (1.0 / l**2) * torch.eye(2, dtype=train_x.dtype) \
-                      - grad_K.T @ K_inv_gradK                        # (2, 2)
-        posterior_cov_grad  = posterior_cov_grad.clamp(min=0.0)
-        return float(posterior_cov_grad.trace().sqrt())
+        sigma2 = GP_model.covar_module.outputscale.detach()
+        grad_K  = self.compute_grad_K(train_x, GP_model, l)                # (N, 2)
+        K_xx_noisy = self.K_XX_noisy(X=train_x, GP_model=GP_model, likelihood=likelihood)
+        K_inv_gradK = torch.linalg.solve(K_xx_noisy, grad_K)               # (N, 2)
+        posterior_cov_grad  = (sigma2 / l**2) * torch.eye(2, dtype=train_x.dtype) \
+                                - grad_K.T @ K_inv_gradK                   # (2, 2)
+        diag_post_cov_grad  = posterior_cov_grad.diagonal().clamp(min=0.0) # Clamps the diagonal variances to be >= 0
+        return float(diag_post_cov_grad.sum().sqrt())
 
     def acquisition_function(self, train_x, train_y, GP_model, GP_likelihood,
                              sigma2, l, obs_noise, next_query_point, query_space, m):
@@ -201,8 +204,7 @@ class Manipulator:
             n_hat   = X_hat.shape[0]
 
             # K(X̂, X̂) + σ²I
-            K_hat       = GP_model.covar_module(X_hat, X_hat).evaluate().detach()
-            K_hat_noisy = K_hat + GP_likelihood.noise.detach() * torch.eye(n_hat)
+            K_hat_noisy = self.K_XX_noisy(X=X_hat, GP_model=GP_model, likelihood=GP_likelihood)
 
             # ∇_{θ_t} K(θ_t, X̂)  — shape (n+1, 2)
             diffs      = x_curr - X_hat                                      # (n+1, 2)
@@ -239,8 +241,7 @@ class Manipulator:
         lam     = self.compute_lambda()
 
         # Precompute K(train_x, train_x) + σ²I — shared across all candidates
-        K_XX_noisy = (GP_model.covar_module(train_x, train_x).evaluate().detach()
-                      + GP_likelihood.noise.detach() * torch.eye(n_train))
+        K_XX_noisy = self.K_XX_noisy(X=train_x, GP_model=GP_model, likelihood=GP_likelihood) 
 
         I_vals      = torch.zeros(query_space.shape[0])
         sigma2_vals = torch.zeros(query_space.shape[0])
@@ -251,8 +252,7 @@ class Manipulator:
             # -- (1) Gradient variance: Tr( ∇K(θ_t, X̂)ᵀ · K̂⁻¹ · ∇K(θ_t, X̂) ) --
             X_hat       = torch.cat([train_x, qp_2d], dim=0)                # (n+1, 2)
             n_hat       = X_hat.shape[0]
-            K_hat       = GP_model.covar_module(X_hat, X_hat).evaluate().detach()
-            K_hat_noisy = K_hat + GP_likelihood.noise.detach() * torch.eye(n_hat)
+            K_hat_noisy = self.K_XX_noisy(X=X_hat, GP_model=GP_model, likelihood=GP_likelihood)
             diffs       = x_curr - X_hat                                     # (n+1, 2)
             K_curr_hat  = GP_model.covar_module(x_curr, X_hat).evaluate().detach().T  # (n+1, 1)
             grad_K_hat  = -(1 / l**2) * diffs * K_curr_hat                  # (n+1, 2)

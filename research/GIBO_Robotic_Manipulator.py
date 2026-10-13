@@ -12,33 +12,43 @@ from src.core.manipulator import Manipulator
 
 def main():
     start_time = time.perf_counter()
+    
+    # -- Select Algorithm / Convex Opt. Problem --
     algo = input("1 for GIBO | 2 for random sample | 3 for lambda weighted acquisition")
-    optim_type = input("QP or SOCP?" )
+    optim_type = input("QP or SOCP: " )
 
     # i. Initialize Sim
-    sim = Simulation(dt=0.04, end_time=30.0)
+    sim = Simulation(dt=0.04, end_time=15.0)
     # NOTE: dt must be sufficiently small to not explode
 
     # -- GIBO Line 1: Setup GIBO Hyperparameters -- 
-    # a. stepsize η (Not applicable, step forward using numerical integration)
+    # a. stepsize η (Not applicable, step forward using numerical integration with dt)
+    # -- N/A --
 
-    # b. hyperpriors for GP hyperparameters 
-    RBF_gaussian_likelihood = gp.likelihoods.GaussianLikelihood()
-    a = 0.2
-    b = 1.0
-    lengthscale_prior = GammaPrior(a, b) # (a,b) : lengthscale = a/b
-    outputscale_prior = GammaPrior(2.0, .17) # (a,b) : outputscale = a/b
-    GP_model = RBF_example(train_x=[], train_y=[], likelihood=RBF_gaussian_likelihood, l_prior=lengthscale_prior, output_prior=outputscale_prior)
-    GP_model.eval()
-    RBF_gaussian_likelihood.eval()
-    
-    # c. number of iterations -> N = 201 (20 seconds, 0.1s timestep)
+    # b. number of iterations -> N = 201 (20 seconds, 0.1s timestep)
     N = sim.dt
     
-    # d. number of samples for gradient estimate -> M =
+    # c. number of samples for gradient estimate -> M =
     M_samples = 1
     Arm = Manipulator(alpha_cbf=.5, M_number_of_queries=M_samples, dt=N, class_k="linear")
     n_sigma = 2.0
+
+    # e. Fix GP Hyper-parameters based on Manipulator noise + rough estimate of lengthscale.
+    #    NOTE: Fixed Hyperparameters to have (i) smaller lengthscale and ...
+    RBF_gaussian_likelihood = gp.likelihoods.GaussianLikelihood()
+    GP_model = RBF_example(train_x=[], train_y=[],               # Empty Training set to start (no warm-start)
+                           likelihood=RBF_gaussian_likelihood,   # Gaussian Probability Distribution
+                           l_prior=None, output_prior=None)      # Set these values in step (f).
+    l_0     = 1.0       # Length-scale (Rough numbers)
+    S0      = 11.8      # Output-scale (Rough numbers)
+    NOISE_0 = Arm.Noise.noise_std_dev**2                        # Feeds the true noise distribution to our GP
+
+    GP_model.covar_module.base_kernel.lengthscale = l_0         # Setup GP with our initial estimates of lengthscale / outputscale
+    GP_model.covar_module.outputscale             = S0          # Setup likelihood with NOISE_0 estimate
+    RBF_gaussian_likelihood.noise                 = NOISE_0     # Likelihood [sigma_n^2 * I] in the posterior covaraince calculation
+
+    GP_model.eval()                                             # Evaluation mode causes GP_model(x) to return posterior
+    RBF_gaussian_likelihood.eval()
 
     # -- GIBO Line 2: Set theta1 and theta2 (next_query_point) and empty dataset D = {} --
     Arm.D = {"thetas": [], "h": []}
@@ -67,25 +77,29 @@ def main():
                                 targets=train_y,
                                 strict=False)
         sigma2 = GP_model.covar_module.outputscale.detach()
-        l = GP_model.covar_module.base_kernel.lengthscale.detach().squeeze(0)
+        l = GP_model.covar_module.base_kernel.lengthscale.detach().squeeze(0)   # Length-scale (defines local search space for acq function to select over)
         obs_noise = RBF_gaussian_likelihood.noise.detach() 
 
         # -- GIBO Step 7: For m = 1,2, ... M:
-        query_space = Arm.return_gridspace(wander_angle_deg=2*np.rad2deg(.55*a/b))
-        # -- Step 8: Get query point = argmax(acq_function)  
-        
-        for m in range(Arm.M_number_of_queries):
+        query_space = Arm.return_gridspace(wander_angle_deg=2*np.rad2deg(float(l.max())))    # Defines the LOCAL Search Space for acquisition function (creates space to learn gradient)
+        # -- Step 8: Get query point = argmax(acq_function) --
+        for m in range(Arm.M_number_of_queries): # Creates
             # -- GIBO (Original) --
             if algo == "1":
+                # -- Vanilla GIBO --
                 next_query_point, query_covariance_gain = Arm.acquisition_function(train_x=train_x, train_y=train_y, 
                                                         GP_model=GP_model, GP_likelihood=RBF_gaussian_likelihood, 
                                                         sigma2=sigma2, l=l, obs_noise=obs_noise, 
                                                         next_query_point=next_query_point, query_space=query_space, m=m)
                 print(f"QP Covariance Gain: {query_covariance_gain}")
+
             elif algo == "2":
+                # -- Randomly selected acquisition function --
                 next_query_point, query_covariance_gain = Arm.random_acq_function(query_space=query_space)
                 print(f"QP Covariance Gain: {query_covariance_gain}")
+                
             elif algo == "3":
+                # -- Experimental Lambda-weighted GIBO --
                 next_query_point, query_covariance_gain = Arm.composite_acq_function(
                     train_x, GP_model, RBF_gaussian_likelihood, l, query_space)
                 print(f"Lambda Value: {query_covariance_gain}")
