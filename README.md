@@ -4,6 +4,20 @@ https://arxiv.org/pdf/2106.11899
 
 
 
+### Summary metrics per run:
+ - Safety: # violation steps, min h_true, max violation depth, time in violation.
+ - Value learning: mean/final h_std, mean |h_mean − h_true|, 2σ coverage of h.
+ - Gradient learning [!!!]: mean/final ‖μ_∇ − ∇h‖, mean angle error (the QP uses only g's direction), mean/final grad_std, Σ_∇ reduction (AUC of grad_std), 2σ coverage.
+ - Conservatism (brainstorm → chosen): see the next section.
+ - Data/queries: n_data (deterministic: (1+M)·steps, logged for completeness), mean offset/ℓ, fraction at box edge, fraction of queries in the unsafe region (h(q) < 0; matters if queries are ever physical).
+ - Compute: total runtime, mean acquisition time per step.
+
+### Conservatism metrics:
+ 1. Intervention: fraction of steps with u ≠ u_nom; mean ‖u − u_nom‖.
+ 2. Boundary gap: mean h_true over steps where r₁(t) > θ_max. Ideally ≈ 0: the arm should ride the limit.
+ 3. Excess tracking error: RMSE(θ − r) − RMSE_oracle.
+ 4. Learning-induced conservatism (headline): boundary gap − oracle gap (same θ₀, seed and noise). It isolates the cost of not knowing h from the conservatism built into the CBF design (γ, α, class-K).
+
 
 ## Introductory Experiments
 ### Stage 4 (GIBO)
