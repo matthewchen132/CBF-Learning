@@ -1,6 +1,25 @@
-## Researching Bayesian Optimization methods to learn Information about the Gradient.
-Papers: 
-https://arxiv.org/pdf/2106.11899
+## Gradient-Information from BayesOpt
+Inspiration Paper: https://arxiv.org/pdf/2106.11899
+
+## Context:
+Bayesian Optimization is a highly sample-efficient optimization method which focuses on (1) using a surrogate model to fit a desired function, and (2) optimizing samples of each function to balance **exploration** of the search space and **exploitation** of useful data. Each sample is optimized through usage of an **acquisition function**, a user-defined function which provides a ranking of all points in the space. 
+
+> [!NOTE]
+Bayesian Optimization has some amazing properties:
+- Un-matched sample efficiency
+- Globally searching optimization algorithm.
+- No reliance on gradients
+- Accounts for Noise
+
+
+## Example: Efficient Global Optimization (EGO):
+- Utilizes the Expected Improvement acquisition function to search for points in uncertain areas, and points with high value. By selecting these points optimally with an acquisition function, EGO can effectively find a (pretty close to) optimal outcome for a system with sparse sampling and no reliance on gradients.
+
+<img width="3527" height="1547" alt="image" src="https://github.com/user-attachments/assets/cd0842f7-96c6-4610-979b-6be389a2557f" />
+
+
+
+This project is conducted through the _Safe Autonomous Systems Lab_ at the University of California San Diego.
 
 
 
