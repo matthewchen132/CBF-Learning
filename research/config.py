@@ -47,9 +47,8 @@ class CBFConfig:
 @dataclass
 class GPConfig:
     # Fixed hyperparameters (no retraining → chosen, not learned)
-    l_0: float = 1.0        # ℓ [rad]: (max step travel 0.28)/0.46 ≈ 0.6 ≤ ℓ ≤ (θ₁ span 5.76)/3 ≈ 1.9
+    l_0: float = 1.0        # l [rad]: (max step travel 0.28)/0.46 ≈ 0.6 ≤ l ≤ (θ₁ span 5.76)/3 ≈ 1.9
     S0: float  = 11.8       # σ² [rad²] ≈ E[h²] = Var(h) + mean(h)² = 4.57 + 2.68² over the reference sweep
-    # Noise variance is NOT set here: σₙ² = RunConfig.noise_std² (tied to the simulated sensor)
     GP_JITTER: float = 1e-6             # added on top of σₙ² in K_XX_noisy (not a floor)
     max_cholesky_size: int = 10**6      # force exact solves (GPyTorch default 800 → CG/Lanczos, wrong variances)
     n_sigma: float = 2.0                # h_safe = μ − n_sigma·σ
@@ -57,7 +56,7 @@ class GPConfig:
 
 @dataclass
 class GIBOConfig:
-    M: int = 2                  # acquisition queries per step
+    M: int = 4                  # acquisition queries per step
     box_factor: float = 2.0     # local search box half-width = box_factor · ℓ
     grid_n: int = 8             # candidates per axis → grid_n² candidates
 
@@ -90,11 +89,10 @@ class SweepConfig:
     algos: tuple       = ("gibo", "random", "lambda")
     optim_type: str    = "SOCP"
     noise_stds: tuple  = (0.05, 0.2, 0.5)
-    Ms: tuple          = (1, 2, 4)
+    Ms: tuple          = (1, 2)
     seeds: tuple       = (0, 1, 2)
-    include_oracle: bool = True     # oracle runs once per (noise, θ₀, seed); independent of M
-    # 5 θ₀ offsets: scrambled Sobol (torch.quasirandom.SobolEngine(2, scramble=True, seed=0)), scaled to ±0.5 rad
-    theta0_offsets: tuple = ((-0.025,  0.093),
+    include_oracle: bool = True                # oracle runs once
+    theta0_offsets: tuple = ((-0.025,  0.093), # 5 sets of manipulator states from scrambled Sobol
                              ( 0.079, -0.463),
                              ( 0.451,  0.362),
                              (-0.380, -0.239),
