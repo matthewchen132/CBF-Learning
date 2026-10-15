@@ -248,6 +248,10 @@ class Manipulator:
         Selects a query point via eq. (14):
           x* = argmax (1-λ)·σ²_h(x)/σ²_max  +  λ·I_∇(x)/I_max
         λ(x) adapts based on joint velocity: fast motion → prioritise gradient learning.
+
+        -- Low speed of system causes the weighting term `lam` to be small. -- 
+        lam = 1 is vanilla GIBO, occurs at high speed.
+        lam = 0 heavily weights posterior covariance.
         """
         lam = self.compute_lambda()
 
@@ -258,8 +262,15 @@ class Manipulator:
 
         # -- Normalise then combine with adaptive λ (eq. 14) --
         max_I      = I_vals.max().clamp(min=1e-12)
+        min_I      = I_vals.min().clamp(min=1e-12)
         max_sigma2 = sigma2_vals.max().clamp(min=1e-12)
-        acq_vals   = (1 - lam) * (sigma2_vals / max_sigma2) + lam * (I_vals / max_I)
+
+        # -- Weighted --
+        posterior_covariance = (sigma2_vals / max_sigma2)
+        GIBO_term = (I_vals - min_I) / (max_I - min_I).clamp(1e-12)
+        acq_vals   = (1 - lam) * posterior_covariance + lam * GIBO_term
+
+        # -- Select the best index --
         best_idx   = acq_vals.argmax()
         next_qp    = query_space[best_idx]
         return next_qp, lam
