@@ -20,38 +20,41 @@ class Manipulator:
     GIBO provides ĝ = E[∇_θ J], which feeds the HOCBF-QP in place of the analytic gradient.
     """
 
-    # ── Physical parameters ───────────────────────────────────────────────────
-    m1, m2   = 1.0, 1.0
-    l1, l2   = 1.0, 1.0
-    lc1, lc2 = 0.5, 0.5
-    I1 = m1 * l1**2 / 12
-    I2 = m2 * l2**2 / 12
-    c11 = I1 + m1*lc1**2 + I2 + m2*lc2**2 + m2*l1**2
-    c12 = 2 * m2 * l1 * lc2
-    c13 = I2 + m2 * lc2**2
-    c14 = m2 * l1 * lc2
-    c21 = I2 + m2 * lc2**2
-
-    # -- Safety / HOCBF constants --
-    THETA_MAX = np.radians(150.0)
-    CBF_GAMMA = 5.0   # rate for ψ = ḣ + γh ; FIX AT 5 for consistent results
-    CBF_ALPHA = 5.0   # rate for ψ̇ + αψ ≥ 0 ; FIX AT 5 for consistent results
-
-    # -- GP numerics --
-    GP_JITTER = 1e-6  # numerical jitter added on top of σₙ² (not a floor) — keeps solves stable
-
-    # -- Tracking controller gains --
-    KP = 100.0
-    KD = 20.0
+    # All constants come from config.RunConfig (see __init__); none are hard-coded here.
 
     def __init__(self, alpha_cbf: float, M_number_of_queries: int, dt: float,
-                 class_k: str = "linear"):
+                 class_k: str = "linear", cfg=None):
+        from config import RunConfig                # local import: config.py lives in research/, above src/
+        self.cfg = cfg or RunConfig()               # single source for all constants
+        arm, cbf = self.cfg.arm, self.cfg.cbf
+
+        # -- Physical parameters + derived inertia terms --
+        self.m1, self.m2   = arm.m1, arm.m2
+        self.l1, self.l2   = arm.l1, arm.l2
+        self.lc1, self.lc2 = arm.lc1, arm.lc2
+        self.I1  = self.m1 * self.l1**2 / 12
+        self.I2  = self.m2 * self.l2**2 / 12
+        self.c11 = self.I1 + self.m1*self.lc1**2 + self.I2 + self.m2*self.lc2**2 + self.m2*self.l1**2
+        self.c12 = 2 * self.m2 * self.l1 * self.lc2
+        self.c13 = self.I2 + self.m2 * self.lc2**2
+        self.c14 = self.m2 * self.l1 * self.lc2
+        self.c21 = self.I2 + self.m2 * self.lc2**2
+
+        # -- Safety / HOCBF constants --
+        self.THETA_MAX = np.radians(cbf.THETA_MAX_deg)
+        self.CBF_GAMMA = cbf.CBF_GAMMA      # rate for ψ = ḣ + γh
+        self.CBF_ALPHA = cbf.CBF_ALPHA      # rate for ψ̇ + αψ ≥ 0
+
+        # -- GP numerics / tracking gains --
+        self.GP_JITTER = self.cfg.gp.GP_JITTER
+        self.KP, self.KD = arm.KP, arm.KD
         self.alpha_cbf = alpha_cbf
         self.M_number_of_queries = M_number_of_queries
         self.dt = dt
         self.D = {"thetas": [], "h": []}
-        self.rng = np.random.default_rng(seed=2)
-        self.Noise = Noise(self.rng, noise_std_dev=0.1)
+        self.rng     = np.random.default_rng(seed=self.cfg.seed)          # sensor-noise draws only
+        self.acq_rng = np.random.default_rng(seed=self.cfg.seed + 1000)   # random acquisition only (keeps noise paired across algos)
+        self.Noise   = Noise(self.rng, noise_std_dev=self.cfg.noise_std)
         self.class_K = class_k
 
         # Class K function α₁(h) and its derivative α₁'(h) for the HOCBF
@@ -76,7 +79,7 @@ class Manipulator:
 
         # Start near reference at t = 0
         r0, dr0, _ = self.reference(0.0)
-        self.theta  = r0  + np.array([0.3, -0.2])
+        self.theta  = r0  + np.array(self.cfg.theta0_offset)    # θ₀ = r(0) + offset (sweep presets in SweepConfig)
         self.dtheta = dr0 + np.array([0.0,  0.0])
 
     # -- Arm dynamics --
@@ -97,10 +100,12 @@ class Manipulator:
 
     # -- Reference trajectory --
     def reference(self, t: float):
-        """r(t) = [π·sin(t), (π/2)·sin(4t)] and its first two derivatives."""
-        r   = np.array([np.pi * np.sin(t),    (np.pi / 2) * np.sin(4 * t)])
-        dr  = np.array([np.pi * np.cos(t),     2 * np.pi  * np.cos(4 * t)])
-        ddr = np.array([-np.pi * np.sin(t),   -8 * np.pi  * np.sin(4 * t)])
+        """r(t) = A·sin(ω t) per joint (default A = [π, π/2], ω = [1, 4]) and its first two derivatives."""
+        A = np.array(self.cfg.arm.ref_amp)
+        w = np.array(self.cfg.arm.ref_freq)
+        r   =  A        * np.sin(w * t)
+        dr  =  A * w    * np.cos(w * t)
+        ddr = -A * w**2 * np.sin(w * t)
         return r, dr, ddr
 
     # -- Nominal controller --
@@ -151,12 +156,13 @@ class Manipulator:
         return K + (float(likelihood.noise.detach()) + self.GP_JITTER) * torch.eye(len(X))  # (n, n) + sensor noise + jitter
 
     def return_gridspace(self, wander_angle_deg) -> torch.Tensor:
-        """8×8 candidate query points centred on current (θ₁, θ₂)."""
+        """grid_n × grid_n candidate query points centred on current (θ₁, θ₂)."""
+        n = self.cfg.gibo.grid_n
         wander = np.deg2rad(wander_angle_deg)  # radians
-        t1 = torch.linspace(float(self.theta[0]) - wander, float(self.theta[0]) + wander, 8)
-        t2 = torch.linspace(float(self.theta[1]) - wander, float(self.theta[1]) + wander, 8)
+        t1 = torch.linspace(float(self.theta[0]) - wander, float(self.theta[0]) + wander, n)
+        t2 = torch.linspace(float(self.theta[1]) - wander, float(self.theta[1]) + wander, n)
         g1, g2 = torch.meshgrid(t1, t2, indexing='ij')
-        return torch.stack([g1.flatten(), g2.flatten()], dim=1)  # (64, 2)
+        return torch.stack([g1.flatten(), g2.flatten()], dim=1)  # (n², 2)
 
     def compute_grad_K(self, train_x: torch.Tensor, GP_model,
                        lengthscale: torch.Tensor) -> torch.Tensor:
@@ -187,37 +193,44 @@ class Manipulator:
         diag_post_cov_grad  = posterior_cov_grad.diagonal().clamp(min=0.0) # Clamps the diagonal variances to be >= 0
         return float(diag_post_cov_grad.sum().sqrt())
 
+    def gradient_info_scores(self, train_x, query_space, GP_model, likelihood, l, return_post_var=False):
+        """
+        Gradient-information score for every candidate q at once (identical to the per-candidate loop):
+            score(q) = tr(Ĝᵀ K̂⁻¹ Ĝ),  X̂ = [train_x, q]
+                     = tr(Gᵀ K⁻¹ G)  +  ‖g_q − kᵀK⁻¹G‖² / s        (block inverse / Schur complement)
+            s        = κ − kᵀ K⁻¹ k  = predictive variance of a reading at q (σ²_post(q) + σₙ²)
+        Cost: one Cholesky of K (n³) + triangular solves (n² per candidate), instead of n³ per candidate.
+        """
+        with torch.no_grad():
+            K     = self.K_XX_noisy(train_x, GP_model, likelihood)                  # (n, n)
+            L     = torch.linalg.cholesky(K)                                        # K = L·Lᵀ, factored once
+            G     = self.compute_grad_K(train_x, GP_model, l)                       # (n, 2)  ∇_θt k(θ_t, X)
+            g_q   = self.compute_grad_K(query_space, GP_model, l)                   # (Q, 2)  ∇_θt k(θ_t, q)
+            k_Xq  = GP_model.covar_module(train_x, query_space).evaluate()          # (n, Q)  k(X, q)
+            kappa = GP_model.covar_module(query_space, query_space, diag=True) \
+                    + float(likelihood.noise) + self.GP_JITTER                      # (Q,)    k(q,q) + σₙ² + jitter
+
+            Kinv_G = torch.cholesky_solve(G, L)                                     # (n, 2)  K⁻¹G
+            Kinv_k = torch.cholesky_solve(k_Xq, L)                                  # (n, Q)  K⁻¹k for all q
+            base   = torch.trace(G.T @ Kinv_G)                                      # info already held (same ∀q)
+            resid  = g_q - Kinv_k.T @ G                                             # (Q, 2)  new gradient info
+            s      = kappa - (k_Xq * Kinv_k).sum(dim=0)                             # (Q,)    Schur complement
+            scores = base + (resid**2).sum(dim=1) / s                               # (Q,)    full score
+            if return_post_var:
+                return scores, s - float(likelihood.noise) - self.GP_JITTER         # σ²_post(q) = k_qq − kᵀK⁻¹k
+            return scores
+
     def acquisition_function(self, train_x, train_y, GP_model, GP_likelihood,
                              sigma2, l, obs_noise, next_query_point, query_space, m):
         """
         Select the query point that maximises expected decrease in Jacobian variance at θ_t.
         Criterion: Tr( ∇K(θ_t, X̂)ᵀ · (K(X̂,X̂) + σ²I)⁻¹ · ∇K(θ_t, X̂) )
         where X̂ = [train_x, qp] — the extended dataset including the candidate.
+        Computed for all candidates at once by gradient_info_scores (exact, O(n²) per candidate).
         """
-        x_curr  = train_x.new_tensor([[self.theta[0], self.theta[1]]])  # (1, 2) — fixed
-
-        best_val = -float("inf")
-        next_qp  = query_space[0]
-        for qp in query_space:
-            # Extended dataset X̂ = [train_x, qp]
-            X_hat   = torch.cat([train_x, qp.unsqueeze(0)], dim=0)          # (n+1, 2)
-            n_hat   = X_hat.shape[0]
-
-            # K(X̂, X̂) + σ²I
-            K_hat_noisy = self.K_XX_noisy(X=X_hat, GP_model=GP_model, likelihood=GP_likelihood)
-
-            # ∇_{θ_t} K(θ_t, X̂)  — shape (n+1, 2)
-            diffs      = x_curr - X_hat                                      # (n+1, 2)
-            K_curr_hat = GP_model.covar_module(x_curr, X_hat).evaluate().detach().T  # (n+1, 1)
-            grad_K_hat = -(1 / l**2) * diffs * K_curr_hat                   # (n+1, 2)
-
-            K_hat_inv_grad = torch.linalg.solve(K_hat_noisy, grad_K_hat)    # (n+1, 2)
-            tr_val = torch.trace(grad_K_hat.T @ K_hat_inv_grad)             # scalar
-
-            if tr_val > best_val:
-                best_val = tr_val
-                next_qp  = qp
-        return next_qp, float(best_val)
+        scores = self.gradient_info_scores(train_x, query_space, GP_model, GP_likelihood, l)   # (Q,) full score per candidate
+        best   = int(scores.argmax())                                                          # first max, same tie-break as the old `>` loop
+        return query_space[best], float(scores[best])
     
     def compute_lambda(self, full_norm=True) -> float:
         """
@@ -235,40 +248,29 @@ class Manipulator:
         Selects a query point via eq. (14):
           x* = argmax (1-λ)·σ²_h(x)/σ²_max  +  λ·I_∇(x)/I_max
         λ(x) adapts based on joint velocity: fast motion → prioritise gradient learning.
+
+        -- Low speed of system causes the weighting term `lam` to be small. -- 
+        lam = 1 is vanilla GIBO, occurs at high speed.
+        lam = 0 heavily weights posterior covariance.
         """
-        x_curr  = train_x.new_tensor([[self.theta[0], self.theta[1]]])  # (1, 2) — fixed
-        n_train = train_x.shape[0]
-        lam     = self.compute_lambda()
+        lam = self.compute_lambda()
 
-        # Precompute K(train_x, train_x) + σ²I — shared across all candidates
-        K_XX_noisy = self.K_XX_noisy(X=train_x, GP_model=GP_model, likelihood=GP_likelihood) 
-
-        I_vals      = torch.zeros(query_space.shape[0])
-        sigma2_vals = torch.zeros(query_space.shape[0])
-
-        for idx, qp in enumerate(query_space):
-            qp_2d = qp.unsqueeze(0)  # (1, 2) — GPyTorch requires 2D inputs
-
-            # -- (1) Gradient variance: Tr( ∇K(θ_t, X̂)ᵀ · K̂⁻¹ · ∇K(θ_t, X̂) ) --
-            X_hat       = torch.cat([train_x, qp_2d], dim=0)                # (n+1, 2)
-            n_hat       = X_hat.shape[0]
-            K_hat_noisy = self.K_XX_noisy(X=X_hat, GP_model=GP_model, likelihood=GP_likelihood)
-            diffs       = x_curr - X_hat                                     # (n+1, 2)
-            K_curr_hat  = GP_model.covar_module(x_curr, X_hat).evaluate().detach().T  # (n+1, 1)
-            grad_K_hat  = -(1 / l**2) * diffs * K_curr_hat                  # (n+1, 2)
-            K_hat_inv_grad = torch.linalg.solve(K_hat_noisy, grad_K_hat)    # (n+1, 2)
-            I_vals[idx] = torch.trace(grad_K_hat.T @ K_hat_inv_grad)
-
-            # -- (2) Posterior variance at qp: σ²(qp|train_x) --
-            k_qq   = GP_model.covar_module(qp_2d, qp_2d).evaluate().detach().squeeze()
-            k_qX   = GP_model.covar_module(qp_2d, train_x).evaluate().detach()          # (1, n)
-            alpha  = torch.linalg.solve(K_XX_noisy, k_qX.T)                             # (n, 1)
-            sigma2_vals[idx] = (k_qq - (k_qX @ alpha).squeeze()).clamp(min=0.0)
+        # (1) gradient info I_∇(q) and (2) posterior variance σ²(q | train_x), all candidates at once
+        I_vals, sigma2_vals = self.gradient_info_scores(train_x, query_space, GP_model, GP_likelihood, l,
+                                                        return_post_var=True)
+        sigma2_vals = sigma2_vals.clamp(min=0.0)
 
         # -- Normalise then combine with adaptive λ (eq. 14) --
         max_I      = I_vals.max().clamp(min=1e-12)
+        min_I      = I_vals.min().clamp(min=1e-12)
         max_sigma2 = sigma2_vals.max().clamp(min=1e-12)
-        acq_vals   = (1 - lam) * (sigma2_vals / max_sigma2) + lam * (I_vals / max_I)
+
+        # -- Weighted --
+        posterior_covariance = (sigma2_vals / max_sigma2)
+        GIBO_term = (I_vals - min_I) / (max_I - min_I).clamp(1e-12)
+        acq_vals   = (1 - lam) * posterior_covariance + lam * GIBO_term
+
+        # -- Select the best index --
         best_idx   = acq_vals.argmax()
         next_qp    = query_space[best_idx]
         return next_qp, lam
@@ -279,7 +281,7 @@ class Manipulator:
          - randomly selects query points in the gridspace vs acquisition function
         """
 
-        next_qp  = query_space[np.random.randint(0,query_space.shape[0])]
+        next_qp  = query_space[self.acq_rng.integers(0, query_space.shape[0])]   # seeded, separate from noise RNG
         return next_qp,  0.0
 
     # -- HOCBF-QP --
@@ -292,7 +294,7 @@ class Manipulator:
         g     = grad_h.numpy()
 
         g_norm = np.linalg.norm(g)
-        if g_norm < 1e-6:
+        if g_norm < self.cfg.cbf.qp_grad_norm_eps:
             g = np.array([-1.0, 0.0])
         else:
             g = g / g_norm          # normalize — only direction enters the constraint
@@ -363,7 +365,7 @@ class Manipulator:
         slack = cp.Variable(nonneg=True)
         constraint = [cp.norm(A_cone @ tau + b_cone) <= c_linear @ tau + d_linear + slack ] 
         
-        objective = cp.Minimize(cp.sum_squares(tau - torque_nom) + 1e6 * cp.square(slack)) # min || u - u* ||^2
+        objective = cp.Minimize(cp.sum_squares(tau - torque_nom) + self.cfg.cbf.socp_slack_weight * cp.square(slack)) # min || u - u* ||^2
         prob = cp.Problem(objective=objective, constraints=constraint)
         prob.solve()
         print(f"{tau.value} \n")
