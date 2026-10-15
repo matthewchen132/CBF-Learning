@@ -1,14 +1,29 @@
-# Purpose:
-Compare performance of conventional CBFs vs. CBFs learned via Gaussian Processes. 
-Incorporate "smart polling" into learning-based GP-CBFs, intelligently selecting a next point to explore by choosing a nearby point of high covariance.
+## Gradient-Information from BayesOpt
+Gradient Information Paper: https://arxiv.org/pdf/2106.11899
 
-Paper on GIBO: https://arxiv.org/pdf/2106.11899
+## Context:
+Bayesian Optimization is a highly sample-efficient optimization method which focuses on (1) using a surrogate model to fit a desired function, and (2) optimizing samples of each function to balance **exploration** of the search space and **exploitation** of useful data. Each sample is optimized through usage of an **acquisition function**, a user-defined function which provides a ranking of all points in the space. 
 
-# 10/13: Acquisition-function benchmark (in progress)
-Compare vanilla GIBO, random querying, and λ-weighted acquisition (ours) as the gradient learner for a
-GP-learned HOCBF on a 2-DOF arm (θ₁ ≤ 150°). Full metric definitions: [metrics_to_track.md](metrics_to_track.md).
+> [!NOTE]
+Bayesian Optimization has some amazing properties:
+- Un-matched sample efficiency
+- Globally searching optimization algorithm.
+- No reliance on gradients
+- Accounts for Noise
 
-**Sweep:** σₙ ∈ {0.05, 0.2, 0.5} × M ∈ {1, 2} × 5 Sobol θ₀ × 3 paired seeds (+ oracle baseline) = 315 runs.
+
+## Example: Efficient Global Optimization (EGO):
+- Utilizes the Expected Improvement acquisition function to search for points in uncertain areas, and points with high value. By selecting these points optimally with an acquisition function, EGO can effectively find a (pretty close to) optimal outcome for a system with sparse sampling and no reliance on gradients.
+
+<img width="3527" height="1547" alt="image" src="https://github.com/user-attachments/assets/cd0842f7-96c6-4610-979b-6be389a2557f" />
+
+This project is conducted through the _Safe Autonomous Systems Lab_ at the University of California San Diego.
+
+
+# Monte Carlo Sweep
+Compare performance of a new weighted acquisition function vs vanilla GIBO, random querying on a GP-learned HOCBF on a 2-DOF arm (θ₁ ≤ 150°). Full metric definitions: [metrics_to_track.md](metrics_to_track.md).
+
+**Sweep Parameters:** σₙ ∈ {0.05, 0.2, 0.5} × M ∈ {1, 2} × 5 Sobol θ₀ × 3 paired seeds (+ oracle baseline) = 315 runs.
 
 ## Metrics (brief — full definitions in [metrics_to_track.md](metrics_to_track.md))
 Each run logs ~22 fields per step (`steps.npz`) and ~28 summary metrics (`summary.json`).
@@ -75,15 +90,27 @@ Commit before a sweep: `config.json` records the git commit, and a `dirty: true`
 **Fixes this round:** GP hyperparameters tied to the sensor noise and derived from the trajectory (ℓ = 1.0, σ² = 11.8);
 σ²/ℓ² prior in Σ_∇; a single noisy Gram matrix for every GP computation; exact Cholesky above 800 points;
 exact O(n²)-per-candidate acquisition (~22× faster).
+
 # 4/05: Zero-noise CBF vs noisy CBF vs learned-CBF under varying simulated sensor noise conditions.
 <img width="250" height="200" alt="image" src="https://github.com/user-attachments/assets/04d7d6f4-5843-4a32-8320-63e42ae6191a" />
 
+### Summary metrics per run:
+ - Safety: # violation steps, min h_true, max violation depth, time in violation.
+ - Value learning: mean/final h_std, mean |h_mean − h_true|, 2σ coverage of h.
+ - Gradient learning [!!!]: mean/final ‖μ_∇ − ∇h‖, mean angle error (the QP uses only g's direction), mean/final grad_std, Σ_∇ reduction (AUC of grad_std), 2σ coverage.
+ - Conservatism (brainstorm → chosen): see the next section.
+ - Data/queries: n_data (deterministic: (1+M)·steps, logged for completeness), mean offset/ℓ, fraction at box edge, fraction of queries in the unsafe region (h(q) < 0; matters if queries are ever physical).
+ - Compute: total runtime, mean acquisition time per step.
 
-# 3/24: Conventional CBF performance under noise:
-<img width="300" height="251" alt="image" src="https://github.com/user-attachments/assets/173dd130-b97f-491b-bbad-eecf73851c47" />
+### Conservatism metrics:
+ 1. Intervention: fraction of steps with u ≠ u_nom; mean ‖u − u_nom‖.
+ 2. Boundary gap: mean h_true over steps where r₁(t) > θ_max. Ideally ≈ 0: the arm should ride the limit.
+ 3. Excess tracking error: RMSE(θ − r) − RMSE_oracle.
+ 4. Learning-induced conservatism (headline): boundary gap − oracle gap (same θ₀, seed and noise). It isolates the cost of not knowing h from the conservatism built into the CBF design (γ, α, class-K).
 
 
-# Stage 4 (GIBO)
+## Introductory Experiments
+### Stage 4 (GIBO)
 <img width="485" height="385" alt="image" src="https://github.com/user-attachments/assets/fb720dd6-a6e3-4f89-a8f0-f8ccafc29f86" />
 
 <img width="495" height="391" alt="image" src="https://github.com/user-attachments/assets/e36f2e7b-d980-40d0-9426-0313bc64243e" />
@@ -92,21 +119,8 @@ exact O(n²)-per-candidate acquisition (~22× faster).
  - However, polling becomes locally "Trapped" with small step sizes
 
 
-# Stage 1: Basic GP regression implementation (Done)
-GP regression on 1D function.
-Implement experiments with at least 3 kernels (SE, Matern kernels).
-For each kernel, fit hyperparameters, then compare the posterior mean and predictive variance.
+### 4/05: Zero-noise CBF vs noisy CBF vs learned-CBF under varying simulated sensor noise conditions.
+<img width="250" height="200" alt="image" src="https://github.com/user-attachments/assets/04d7d6f4-5843-4a32-8320-63e42ae6191a" />
 
-Deliverables/Notes: 
- - Plot is under GP_Example_Plots. ( GP_Example_Plots/Stage1_Plots.png ) 
- - We saw strongest performance from Linear + Matern (measured by lowest loss). This makes sense as the linear kernel accounts for the linear bias in our underlying function.
-![alt text](GP_Example_Plots/Stage1_Plots.png)
-
-Kernel smoothness.
- - matern 5/2 is twice differentiable, while Squared exponential is infinitely differentiable. In the image below, I cranked up the rate parameter of the initial linear scale. This shows that Matern 5/2 was much noisier around the edges as compared to the SE kernel. This seems to imply that infinitely differentiable kernels will have less noise and be more smooth.
- - Another Note: we do see that final loss of Matern 5/2 is slightly higher, indicating worse performance. 
- ![alt text](image.png)
-
-
-# NOTES
- - GIBO tends to get Stuck in local regions. We can shift this by changing the step size that theta t+1 is updated by, but this seemed to be a recurring issue.
+### 3/24: Conventional CBF performance under noise:
+<img width="300" height="251" alt="image" src="https://github.com/user-attachments/assets/173dd130-b97f-491b-bbad-eecf73851c47" />
